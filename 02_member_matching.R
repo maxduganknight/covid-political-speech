@@ -1,4 +1,3 @@
-
 library(readr)
 library(dplyr)
 library(progress)
@@ -24,10 +23,6 @@ for (i in y_list) {
   
   year <- read_rds(paste0("data/debate-single-years/", i))
   
-  # if (i=="1979.rds") {
-  #   year <- year %>% filter(date >= as.Date("1979-05-03"))
-  # }
-  
   year <- year %>% 
     mutate(
       speech_class = case_when(
@@ -42,8 +37,6 @@ for (i in y_list) {
   
   if (any(str_detect(year$speech, "^[0-9]{1,2}\\.?[0-9]{0,2} [a,p]\\.m\\.$|\\n [0-9]{1,2}\\.?[0-9]{0,2} [a,p]m\\n"),
           na.rm = TRUE)) {
-    
-    #message(paste0("Fixing time for year ", i))
     
     time_fix1 <- year %>%
       filter(
@@ -165,8 +158,7 @@ for (i in y_list) {
     filter(str_detect(speakername,
                       regex(speaker_vector, ignore_case = TRUE))) %>% 
     group_by(date)
-  #  fill(mnis_id)
-  
+
   without_speaker <- year %>%
     filter(!str_detect(speakername,
                        regex(speaker_vector, ignore_case = TRUE)))
@@ -175,9 +167,7 @@ for (i in y_list) {
     arrange(date, sort1, sort2) 
   
   date_df[[i]] <- unique(year$date)
-  
-  #year <- year %>% mutate(mnis_id = if_else(mnis_id == "4537", "127", mnis_id))
-  ## need to check the status of this 
+
   save_name <- paste0("data/debate-single-years/", i)
   
   write_rds(year, path = save_name)
