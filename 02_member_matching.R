@@ -11,7 +11,7 @@ members <- read_rds("data/members.rds")
 
 speaker_vector <- c("Speaker|chairman|Chaiman")
 
-y_list <- list.files("data/debate-single-years")
+y_list <- list.files("data/debates")
 
 names_df <- list()
 
@@ -21,7 +21,7 @@ pb <- progress_bar$new(total = length(y_list))
 
 for (i in y_list) {
   
-  year <- read_rds(paste0("data/debate-single-years/", i))
+  year <- read_rds(paste0("data/debates/", i))
   
   year <- year %>% 
     mutate(
@@ -168,7 +168,7 @@ for (i in y_list) {
   
   date_df[[i]] <- unique(year$date)
 
-  save_name <- paste0("data/debate-single-years/", i)
+  save_name <- paste0("data/debates/", i)
   
   write_rds(year, path = save_name)
   

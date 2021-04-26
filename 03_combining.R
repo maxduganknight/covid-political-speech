@@ -4,7 +4,7 @@ library(progress)
 library(stringr)
 library(tidyr)
 
-y_list <- list.files("data/debate-single-years")
+y_list <- list.files("data/debates")
 pb <- progress_bar$new(total = length(y_list))
 
 year_list <- list()
@@ -13,7 +13,7 @@ for (i in y_list) {
   
   pb$tick()
   
-  year_list[[i]] <- read_rds(paste0("data/debate-single-years/", i))
+  year_list[[i]] <- read_rds(paste0("data/debates/", i))
 }
 
 debate <- bind_rows(year_list)

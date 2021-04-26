@@ -6,7 +6,7 @@ library(stringr)
 library(tidyr)
 
 # Initial processing ------------------------------------------------------
-atemp <- list.files(path = "data/xml/", pattern = paste0("2021", ".*.xml"))
+atemp <- list.files(path = "data/xml/scrapedxml/debates/", pattern = paste0("202", ".*.xml"))
 dat <- vector("list", length(atemp))
 dat2 <- vector("list", length(atemp))
 dat3 <- vector("list", length(atemp))
@@ -19,7 +19,7 @@ pb <- progress_bar$new(total = length(atemp),
 for (i in atemp) {
   pb$tick()
   
-  doc <- xmlTreeParse(paste0("data/xml/",i), useInternalNodes = TRUE)
+  doc <- xmlTreeParse(paste0("data/xml/scrapedxml/debates/",i), useInternalNodes = TRUE)
   
   encode <- getEncoding(doc)
   
@@ -27,7 +27,7 @@ for (i in atemp) {
     encode <- "UTF-8"
   }
   
-  doc <- xmlInternalTreeParse(paste0("data/xml/",i), useInternalNodes = TRUE, 
+  doc <- xmlInternalTreeParse(paste0("data/xml/scrapedxml/debates/",i), useInternalNodes = TRUE, 
                               encoding = encode)
   
   nodes_latest <- getNodeSet(doc, "//publicwhip") 
@@ -160,7 +160,7 @@ x <- bind_rows(debate, minor_headings, major_headings, oral_headings) %>%
          oral_heading = iconv(oral_heading,  from = "", "UTF-8")) %>% 
   group_by(date, speech_class, major_heading, minor_heading, oral_heading)
 
-save_name <- paste0("data/", "2021", ".rds")
+save_name <- paste0("data/", "debates_01", ".rds")
 
 write_rds(x, path = save_name)
   
