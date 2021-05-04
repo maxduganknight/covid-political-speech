@@ -5,6 +5,7 @@ library(quanteda)
 library(stm)
 library(quanteda.textmodels)
 library(dplyr)
+library(glmnet)
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
@@ -14,8 +15,9 @@ precrecall <- function(mytable, classes=2) {
   false_positives <- sum(mytable[1,]) - true_positives
   false_negatives <- sum(mytable[,1]) - true_positives
   precision <- true_positives / (true_positives + false_positives)
+  accuracy <- sum(diag(mytable)) / sum(mytable)
   recall <- true_positives / (true_positives + false_negatives)
-  output <- list(precision, recall)
+  output <- list(precision, recall, accuracy)
   return(output)
 }
 
@@ -30,7 +32,7 @@ get_posterior <- function(nb) {
 }
 
 speeches <- readRDS("data/covid_speeches.rds")
-addtl_stopwords <- c("hon", "hon_friend")
+addtl_stopwords <- c("hon", "hon_friend", "government", "people")
 covid_keywords <- c("covid", "coronavirus", "pandemic", "lockdown", "pandemic", 
                     "epidemic", "covid-19")
 corpus <- corpus(speeches, text_field = "speech")
@@ -47,7 +49,7 @@ dfm <- covid_corpus %>%
   tokens_remove(c(addtl_stopwords, stopwords("en")), padding = FALSE) %>%
   dfm() %>%
   dfm_trim(min_termfreq = 3, min_docfreq = 2) %>% 
-  dfm_tfidf() # normalize using tfidf
+  dfm_tfidf() # weight using tfidf
 dfm
 
 # wordcloud
@@ -68,20 +70,22 @@ colnames(classified_texts) <- c("textid", "text", "person_id", "first_name",
 
 # cross validation on training data
 # randomly shuffle training data before splitting
-set.seed(4)
+set.seed(3)
 df_train <- classified_texts[sample(nrow(classified_texts)), 
                              c("textid", "label")]
 
-# split data evenly into 5 groups
-n <- nrow(df_train)/5
+# split data evenly into k groups
+k <- 7
+n <- nrow(df_train)/k
 nr <- nrow(df_train)
 splits <- split(df_train, rep(1:ceiling(nr/n), 
                               each = n, length.out = nr)) 
 
 # use splits to train nb model on 4 out of 5 splits and test on 5th.
-precision <- numeric(5)
-recall <- numeric(5)
-tables <- vector(mode = "list", length = 5)
+precision <- numeric(k)
+recall <- numeric(k)
+accuracy <- numeric(k)
+tables <- vector(mode = "list", length = k)
 
 for (i in 1:length(splits)) {
   print(sprintf("Testing on split: %s", i))
@@ -96,9 +100,25 @@ for (i in 1:length(splits)) {
   tables[[i]] <- cm
   precision[i] <- precrecall(cm)[[1]]
   recall[i] <- precrecall(cm)[[2]]
+  accuracy[i] <- precrecall(cm)[[3]]
 }
 print(mean(precision))
 print(mean(recall))
+print(mean(accuracy))
+
+# ridge regression
+
+cv.ridge <- cv.glmnet(x=dfm[train_idx,], y=train_y, alpha=0, nfolds=5)
+
+plot(cv.ridge)
+
+ridge_accuracy <- 1 - cv.ridge$cvm[cv.ridge$lambda == cv.ridge$lambda.min]
+
+
+# performance metrics
+precrecall(cm) # precision, recall
+sum(diag(cm)) / sum(cm) # accuracy
+
 
 # MDK below isn't working at the moment. Need to find a good way to subset 
 # into train and test
