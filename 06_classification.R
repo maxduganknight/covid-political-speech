@@ -6,6 +6,10 @@ library(stm)
 library(quanteda.textmodels)
 library(dplyr)
 library(glmnet)
+library(doMC)
+library(ranger)
+
+
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
@@ -43,14 +47,19 @@ covid_corpus <-  corpus_subset(corpus, grepl(paste(covid_keywords,collapse = "|"
 # create dfm
 dfm <- covid_corpus %>%
   tokens(remove_punct = TRUE, remove_numbers = TRUE, remove_symbols = TRUE) %>%
-  tokens_select(min_nchar = 2) %>%
+  #tokens_select(min_nchar = 2) %>%
+  #tokens_ngrams(n = 1:2) %>% # up to bigrams
   # for some reason there were a lot of words connected by .
   tokens_split(separator = ".", remove_separator = TRUE) %>% 
   tokens_remove(c(addtl_stopwords, stopwords("en")), padding = FALSE) %>%
   dfm() %>%
-  dfm_trim(min_termfreq = 3, min_docfreq = 2) %>% 
-  dfm_tfidf() # weight using tfidf
+  dfm_trim(min_termfreq = 5, min_docfreq = 2) %>% 
+  dfm_weight(scheme = "prop")
+  #dfm_tfidf() # weight using tfidf
 dfm
+
+#sort columns in case order changes while running
+dfm <- dfm[,sort(featnames(dfm))]
 
 # wordcloud
 library("quanteda.textplots")
@@ -61,21 +70,39 @@ textplot_wordcloud(dfm, min_count = 10, random_order = FALSE, rotation = 0.25,
 classified_texts <- read.csv("data/sample_texts.csv", header = TRUE) %>%
   rbind(read.csv("data/sample_texts2.csv", header = TRUE)) %>%
   drop_na(label) %>%
-  mutate(label = replace(label, label == 4, 3)) #%>%
- #filter(label != 3)
+  mutate(label = replace(label, label == 4, 3))
+
+# downsample category 3 to the number of category 1 speeches
+downsample_size <- nrow(classified_texts[classified_texts$label == 1,])
+unknown_size <- nrow(classified_texts[classified_texts$label == 3,])
+
+classified_texts_balanced <- rbind(
+  classified_texts[classified_texts$label != 3,],
+    classified_texts[classified_texts$label == 3,][sample(
+      unknown_size, downsample_size),]
+  ) 
 
 colnames(classified_texts) <- c("textid", "text", "person_id", "first_name", 
                                 "last_name", "date", "party", "constituency", 
                                 "label")
 
+labelled <- classified_texts_balanced[,-1]
+rownames(labelled) <- classified_texts_balanced[,1]
+
+# order by row names
+labelled <- labelled[ order(row.names(labelled)), ]
+
 # cross validation on training data
 # randomly shuffle training data before splitting
 set.seed(3)
-df_train <- classified_texts[sample(nrow(classified_texts)), 
-                             c("textid", "label")]
+# df_train <- classified_texts_balanced[sample(nrow(classified_texts_balanced)), 
+#                              c("textid", "label")]
+
+df_train <- labelled[sample(nrow(labelled)),] %>%
+  select(label)
 
 # split data evenly into k groups
-k <- 7
+k <- 5
 n <- nrow(df_train)/k
 nr <- nrow(df_train)
 splits <- split(df_train, rep(1:ceiling(nr/n), 
@@ -90,9 +117,9 @@ tables <- vector(mode = "list", length = k)
 for (i in 1:length(splits)) {
   print(sprintf("Testing on split: %s", i))
   train <- bind_rows(splits[-i])
-  train_idx <- train$textid
+  train_idx <- rownames(train)
   train_y <- train$label
-  test_idx <- splits[[i]]$textid
+  test_idx <- rownames(splits[[i]])
   test_y <- splits[[i]]$label
   nb <- textmodel_nb(dfm[train_idx,], train_y)
   preds <- predict(nb, newdata = dfm[test_idx,])
@@ -106,13 +133,55 @@ print(mean(precision))
 print(mean(recall))
 print(mean(accuracy))
 
+# training and test sets
+test_fraction <- 0.3
+training_indices <- sort(rownames(labelled[sample(1:nrow(labelled),
+                           floor(nrow(labelled)*(1-test_fraction))),]))
+
+testing_indices <- sort(setdiff(rownames(labelled), training_indices))
+
+training_X <- dfm[training_indices,]
+training_y <- labelled[training_indices, "label"]
+
+test_X <- dfm[testing_indices,]
+test_y <- labelled[testing_indices, "label"]
+
 # ridge regression
+registerDoMC(cores=8) # adjust
+ridge_model <- cv.glmnet(training_X, training_y, alpha=0, nfolds=5, 
+                      family = "multinomial", parallel=TRUE)
+plot(ridge_model)
 
-cv.ridge <- cv.glmnet(x=dfm[train_idx,], y=train_y, alpha=0, nfolds=5)
+# multinomial lasso classifier
+lasso_model <- cv.glmnet(training_X, training_y, 
+                         family="multinomial", alpha=1, nfolds=5, 
+                         parallel=TRUE, intercept=TRUE, standardize = TRUE)
+plot(lasso_model)
 
-plot(cv.ridge)
+# evaluation
+# Prediction
+test_y_hat <- predict(lasso, test_X, type="class")
 
-ridge_accuracy <- 1 - cv.ridge$cvm[cv.ridge$lambda == cv.ridge$lambda.min]
+# Accuracy
+sum(test_y_hat == test_y)/length(test_y)
+
+# Confusion matrix
+table(test_y_hat, test_y)
+
+
+# random forest
+rf_model <- ranger(x = training_X, y = factor(training_y))
+test_y_hat <- predict(rf_model, test_X)$predictions
+
+# Accuracy
+sum(test_y_hat == test_y)/length(test_y)
+
+# Confusion matrix
+table(test_y_hat, test_y)
+
+#feature importance
+head(importance(rf_model)) %>% sort(decreasing = TRUE) %>% head(20)
+
 
 
 # performance metrics
@@ -120,8 +189,7 @@ precrecall(cm) # precision, recall
 sum(diag(cm)) / sum(cm) # accuracy
 
 
-# MDK below isn't working at the moment. Need to find a good way to subset 
-# into train and test
+
 
 train_rows <- dfm[which(rownames(dfm) %in% df_train$textid),]
 # build model on all hand-classified documents
