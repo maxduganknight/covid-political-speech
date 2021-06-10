@@ -35,8 +35,12 @@ get_acc_F1 <- function(mytable) {
   # F1
   class_1_F1 <- 2*(class_1_recall * class_1_precision) / 
     (class_1_recall + class_1_precision)
+  # turn na into 0
+  class_1_F1 <- ifelse(is.na(class_1_F1), 0, class_1_F1)
   class_2_F1 <- 2*(class_2_recall * class_2_precision) / 
     (class_2_recall + class_2_precision)
+  # turn na into 0
+  class_2_F1 <- ifelse(is.na(class_2_F1), 0, class_2_F1)
   output <- list(accuracy, class_1_F1, class_2_F1)
   return(output)
 }
@@ -92,18 +96,30 @@ dfm <- dfm[,sort(featnames(dfm))]
 # read in hand-classified texts
 classified_texts <- read.csv("data/sample_texts.csv", header = TRUE) %>%
   rbind(read.csv("data/sample_texts2.csv", header = TRUE)) %>%
+  rbind(read.csv("data/sample_texts3.csv", header = TRUE)) %>%
   drop_na(label) %>%
   mutate(label = replace(label, label == 4, 3))
 
-# downsample category 3 to the number of category 1 speeches
-downsample_size <- nrow(classified_texts[classified_texts$label == 1,])
-unknown_size <- nrow(classified_texts[classified_texts$label == 3,])
-
+# undersampling strategies
+class_1_size <- nrow(classified_texts[classified_texts$label == 1,])
+class_2_size <- nrow(classified_texts[classified_texts$label == 2,])
+class_3_size <- nrow(classified_texts[classified_texts$label == 3,])
+  
+# first choice is to undersample class 3 to size of class 1
 classified_texts_balanced <- rbind(
   classified_texts[classified_texts$label != 3,],
     classified_texts[classified_texts$label == 3,][sample(
-      unknown_size, downsample_size),]
+      class_3_size, class_1_size),]
   ) 
+
+# another option is to undersample both classes 1 and 3 to size of class 2
+classified_texts_balanced <- rbind(
+  classified_texts[classified_texts$label == 2,],
+  classified_texts[classified_texts$label == 3,][sample(
+    class_3_size, class_2_size),], 
+  classified_texts[classified_texts$label == 1,][sample(
+    class_1_size, class_2_size),]
+) 
 
 colnames(classified_texts_balanced) <- c("textid", "text", "person_id", "first_name", 
                                 "last_name", "date", "party", "constituency", 
@@ -155,19 +171,63 @@ for (i in 1:length(splits)) {
   class_1_F1[i] <- get_acc_F1(cm)[[2]]
   class_2_F1[i] <- get_acc_F1(cm)[[3]]
 }
-print(mean(class_1_F1))
+print(mean(class_1_F1 ))
 print(mean(class_2_F1))
 print(mean(accuracy))
 
-## Regularized Regressions
+## Divide data into training and test sets and balanace training data
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-# training and test sets
-test_fraction <- 0.3
-training_indices <- sort(rownames(labelled[sample(1:nrow(labelled),
-                           floor(nrow(labelled)*(1-test_fraction))),]))
+colnames(classified_texts) <- c("textid", "text", "person_id", "first_name", 
+                                         "last_name", "date", "party", "constituency", 
+                                         "label")
 
-testing_indices <- sort(setdiff(rownames(labelled), training_indices))
+labelled <- classified_texts[,-1]
+rownames(labelled) <- classified_texts[,1]
+
+# order by row names
+labelled <- labelled[ order(row.names(labelled)), ]
+
+# training and test sets
+set.seed(123)
+test_fraction <- 0.3
+training_rows <- labelled[sample(nrow(labelled), 
+                                 floor(nrow(labelled)*(1-test_fraction))),]
+
+# testing rows set aside before balancing so that the ones undersampled and 
+# dropped out of training do not get included in testing rows. This would lead 
+# to disproportionate ratios in testing rows
+
+testing_indices <- sort(setdiff(rownames(labelled), rownames(training_rows)))
+
+# balance the sampling of training rows but NOT testing rows. 
+# This means that we can assess how our model trained on balanced data 
+# performs on the original breakdown
+
+# undersampling strategies
+class_1_size <- nrow(training_rows[training_rows$label == 1,])
+class_2_size <- nrow(training_rows[training_rows$label == 2,])
+class_3_size <- nrow(training_rows[training_rows$label == 3,])
+
+# first choice is to undersample class 3 to size of class 1
+training_rows_balanced <- rbind(
+  training_rows[training_rows$label != 3,],
+  training_rows[training_rows$label == 3,][sample(
+    class_3_size, class_1_size),]
+) 
+
+# another (so far less successful) option is to undersample both classes 
+# 1 and 3 to size of class 2
+
+# training_rows_balanced <- rbind(
+#   training_rows[training_rows$label == 2,],
+#   training_rows[training_rows$label == 3,][sample(
+#     class_3_size, class_2_size),], 
+#   training_rows[training_rows$label == 1,][sample(
+#     class_1_size, class_2_size),]
+# ) 
+
+training_indices <- rownames(training_rows_balanced)
 
 training_X <- dfm[training_indices,]
 training_y <- labelled[training_indices, "label"]
@@ -175,16 +235,31 @@ training_y <- labelled[training_indices, "label"]
 test_X <- dfm[testing_indices,]
 test_y <- labelled[testing_indices, "label"]
 
+## Regularized Regressions
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 # ridge regression
 registerDoMC(cores=8) # adjust
 ridge_model <- cv.glmnet(training_X, training_y, alpha=0, 
                       family = "multinomial", parallel=TRUE)
 plot(ridge_model)
 
+# evaluation
+# Prediction
+test_y_hat <- predict(ridge_model, test_X, type="class")
+
+# Confusion matrix
+table(test_y_hat, test_y)
+
+accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
+class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
+class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
+
+
 # multinomial lasso classifier
 lasso_model <- cv.glmnet(training_X, training_y, 
                          family="multinomial", alpha=1, 
-                         parallel=TRUE, intercept=TRUE, standardize = TRUE)
+                         parallel=TRUE)
 plot(lasso_model)
 
 # evaluation
@@ -198,32 +273,82 @@ accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
 class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
 class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
 
+# Elastic Net
+elasticnet_model <- cv.glmnet(training_X, training_y, 
+                         family="multinomial", alpha=0.5, 
+                         parallel=TRUE)
+plot(elasticnet_model)
 
-# random forest
-rf_model <- ranger(x = training_X, y = factor(training_y), 
-                   importance = "impurity")
-test_y_hat <- predict(rf_model, test_X)$predictions
-
-# Accuracy
-sum(test_y_hat == test_y)/length(test_y)
+# evaluation
+# Prediction
+test_y_hat <- predict(elasticnet_model, test_X, type="class")
 
 # Confusion matrix
 table(test_y_hat, test_y)
 
-#feature importance
-importance(rf_model) %>% sort(decreasing = TRUE) %>% head(20)
+accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
+class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
+class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
+
+
+## Random Forest: ranger
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+rf_model <- ranger(x = training_X, y = factor(training_y))
+test_y_hat <- predict(rf_model, test_X)$predictions
+
+# Confusion matrix
+table(test_y_hat, test_y)
 
 # performance metrics
 accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
 class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
 class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
 
+#feature importance
+rf_model <- ranger(x = training_X, y = factor(training_y),
+                   importance = "impurity")
+importance(rf_model) %>% sort(decreasing = TRUE) %>% head(20)
 
-train_rows <- dfm[which(rownames(dfm) %in% df_train$textid),]
-# build model on all hand-classified documents
-nb <- textmodel_nb(dfm, df_train$label)
-preds <- predict(nb, newdata = dfm[-train_rows,])
-table(preds)
+## Random Forest: caret
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+library(randomForest)
+library(caret)
+
+rf <- randomForest(x = as.matrix(training_X), 
+                   y = factor(training_y))
+
+control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        repeats=3,
+                        search = "random")
+#Metric compare model is Accuracy
+metric <- "Accuracy"
+set.seed(123)
+#Number randomely variable selected is mtry
+mtry <- sqrt(ncol(training_X))
+tunegrid <- expand.grid(.mtry=mtry)
+rf_default <- train(x = as.matrix(training_X),
+                    y = factor(training_y),
+                    method='rf', 
+                    metric='Accuracy', 
+                    tuneLength=10, 
+                    trControl=control)
+print(rf_default)
+
+
+
+## Naive Bayes
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+nb <- textmodel_nb(training_X, training_y)
+
+preds <- predict(nb, newdata = test_X)
+table(preds, test_y)
+
+accuracy <- get_acc_F1(table(preds, test_y))[[1]]
+class_1_F1 <- get_acc_F1(table(preds, test_y))[[2]]
+class_2_F1 <- get_acc_F1(table(preds, test_y))[[3]]
 
 # original texts that were classified as 1
 head(as.character(covid_corpus)[test_idx[which(preds == 1)]])
@@ -234,5 +359,38 @@ head(as.character(covid_corpus)[test_idx[which(preds == 2)]])
 
 probs <- get_posterior(nb)
 probs[,c("freedom", "jobs", "deaths", "protect", "shield")]
+
+## Support-Vector Machines
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+library(e1071)
+library(ROCR)
+
+# tuning svm hyperparameters
+tune.out <- tune(svm, 
+                 train.x = training_X, 
+                 train.y = training_y,
+                 kernel="radial", 
+                 ranges = list(
+                   gamma=c(2,5),
+                   cost = c(10, 20),
+                   tunecontrol = tune.control(
+                     random = T, sampling = "cross"
+                     ),
+                   cross = 5))
+
+svm_model <- svm(y = training_y, 
+                 x = training_X, 
+                 cost = 10,
+                 gamma = 5, 
+                 kernel = "radial",
+                 type = "C")
+
+test_y_hat <- predict(svm_model, test_X)
+cm_svm <- table(test_y_hat, test_y)
+
+accuracy <- get_acc_F1(cm_svm)[[1]]
+class_1_F1 <- get_acc_F1(cm_svm)[[2]]
+class_2_F1 <- get_acc_F1(cm_svm)[[3]]
 
 
