@@ -59,7 +59,7 @@ get_posterior <- function(nb) {
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 speeches <- readRDS("data/covid_speeches.rds")
-addtl_stopwords <- c("hon", "hon_friend", "government", "people")
+#addtl_stopwords <- c("hon", "hon_friend", "government", "people")
 covid_keywords <- c("covid", "coronavirus", "pandemic", "lockdown", "pandemic", 
                     "epidemic", "covid-19", "tier")
 corpus <- corpus(speeches, text_field = "speech")
@@ -72,14 +72,12 @@ dfm <- covid_corpus %>%
   tokens(remove_punct = TRUE, remove_numbers = TRUE, remove_symbols = TRUE) %>%
   tokens_tolower() %>%
   #tokens_select(min_nchar = 2) %>%
-  #tokens_ngrams(n = 1:2) %>% # up to bigrams
   # for some reason there were a lot of words connected by .
   tokens_split(separator = ".", remove_separator = TRUE) %>% 
-  tokens_remove(c(addtl_stopwords, stopwords("en")), padding = FALSE) %>%
+  tokens_remove(stopwords("en"), padding = FALSE) %>%
   dfm() %>%
   dfm_trim(min_termfreq = 5, min_docfreq = 2) %>% 
   dfm_weight(scheme = "prop")
-  #dfm_tfidf() # weight using tfidf
 dfm
 
 #sort columns in case order changes while running
@@ -100,33 +98,12 @@ classified_texts <- read.csv("data/sample_texts.csv", header = TRUE) %>%
   drop_na(label) %>%
   mutate(label = replace(label, label == 4, 3))
 
-# undersampling strategies
-class_1_size <- nrow(classified_texts[classified_texts$label == 1,])
-class_2_size <- nrow(classified_texts[classified_texts$label == 2,])
-class_3_size <- nrow(classified_texts[classified_texts$label == 3,])
-  
-# first choice is to undersample class 3 to size of class 1
-classified_texts_balanced <- rbind(
-  classified_texts[classified_texts$label != 3,],
-    classified_texts[classified_texts$label == 3,][sample(
-      class_3_size, class_1_size),]
-  ) 
-
-# another option is to undersample both classes 1 and 3 to size of class 2
-classified_texts_balanced <- rbind(
-  classified_texts[classified_texts$label == 2,],
-  classified_texts[classified_texts$label == 3,][sample(
-    class_3_size, class_2_size),], 
-  classified_texts[classified_texts$label == 1,][sample(
-    class_1_size, class_2_size),]
-) 
-
-colnames(classified_texts_balanced) <- c("textid", "text", "person_id", "first_name", 
+colnames(classified_texts) <- c("textid", "text", "person_id", "first_name", 
                                 "last_name", "date", "party", "constituency", 
                                 "label")
 
-labelled <- classified_texts_balanced[,-1]
-rownames(labelled) <- classified_texts_balanced[,1]
+labelled <- classified_texts[,-1]
+rownames(labelled) <- classified_texts[,1]
 
 # order by row names
 labelled <- labelled[ order(row.names(labelled)), ]
@@ -175,22 +152,12 @@ print(mean(class_1_F1 ))
 print(mean(class_2_F1))
 print(mean(accuracy))
 
-## Divide data into training and test sets and balanace training data
+## Test Set Validation Set-up
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-colnames(classified_texts) <- c("textid", "text", "person_id", "first_name", 
-                                         "last_name", "date", "party", "constituency", 
-                                         "label")
-
-labelled <- classified_texts[,-1]
-rownames(labelled) <- classified_texts[,1]
-
-# order by row names
-labelled <- labelled[ order(row.names(labelled)), ]
 
 # training and test sets
 set.seed(123)
-test_fraction <- 0.3
+test_fraction <- 0.2
 training_rows <- labelled[sample(nrow(labelled), 
                                  floor(nrow(labelled)*(1-test_fraction))),]
 
@@ -216,17 +183,6 @@ training_rows_balanced <- rbind(
     class_3_size, class_1_size),]
 ) 
 
-# another (so far less successful) option is to undersample both classes 
-# 1 and 3 to size of class 2
-
-# training_rows_balanced <- rbind(
-#   training_rows[training_rows$label == 2,],
-#   training_rows[training_rows$label == 3,][sample(
-#     class_3_size, class_2_size),], 
-#   training_rows[training_rows$label == 1,][sample(
-#     class_1_size, class_2_size),]
-# ) 
-
 training_indices <- rownames(training_rows_balanced)
 
 training_X <- dfm[training_indices,]
@@ -234,62 +190,6 @@ training_y <- labelled[training_indices, "label"]
 
 test_X <- dfm[testing_indices,]
 test_y <- labelled[testing_indices, "label"]
-
-## Regularized Regressions
-## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ridge regression
-registerDoMC(cores=8) # adjust
-ridge_model <- cv.glmnet(training_X, training_y, alpha=0, 
-                      family = "multinomial", parallel=TRUE)
-plot(ridge_model)
-
-# evaluation
-# Prediction
-test_y_hat <- predict(ridge_model, test_X, type="class")
-
-# Confusion matrix
-table(test_y_hat, test_y)
-
-accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
-class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
-class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
-
-
-# multinomial lasso classifier
-lasso_model <- cv.glmnet(training_X, training_y, 
-                         family="multinomial", alpha=1, 
-                         parallel=TRUE)
-plot(lasso_model)
-
-# evaluation
-# Prediction
-test_y_hat <- predict(lasso_model, test_X, type="class")
-
-# Confusion matrix
-table(test_y_hat, test_y)
-
-accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
-class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
-class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
-
-# Elastic Net
-elasticnet_model <- cv.glmnet(training_X, training_y, 
-                         family="multinomial", alpha=0.5, 
-                         parallel=TRUE)
-plot(elasticnet_model)
-
-# evaluation
-# Prediction
-test_y_hat <- predict(elasticnet_model, test_X, type="class")
-
-# Confusion matrix
-table(test_y_hat, test_y)
-
-accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
-class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
-class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
-
 
 ## Random Forest: ranger
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -310,38 +210,68 @@ rf_model <- ranger(x = training_X, y = factor(training_y),
                    importance = "impurity")
 importance(rf_model) %>% sort(decreasing = TRUE) %>% head(20)
 
-## Random Forest: caret
-## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-library(randomForest)
-library(caret)
+## Regularized Regressions
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-rf <- randomForest(x = as.matrix(training_X), 
-                   y = factor(training_y))
+# ridge regression
+registerDoMC(cores=8) # adjust
+ridge_model <- cv.glmnet(training_X, training_y, alpha=0, 
+                      parallel=TRUE, family = "multinomial", 
+                      type.measure = "class")
+plot(ridge_model)
 
-control <- trainControl(method='repeatedcv', 
-                        number=5, 
-                        repeats=3,
-                        search = "random")
-#Metric compare model is Accuracy
-metric <- "Accuracy"
-set.seed(123)
-#Number randomely variable selected is mtry
-mtry <- sqrt(ncol(training_X))
-tunegrid <- expand.grid(.mtry=mtry)
-rf_default <- train(x = as.matrix(training_X),
-                    y = factor(training_y),
-                    method='rf', 
-                    metric='Accuracy', 
-                    tuneLength=10, 
-                    trControl=control)
-print(rf_default)
+# evaluation
+# Prediction
+test_y_hat <- predict(ridge_model, test_X, type="class")
+
+# Confusion matrix
+table(test_y_hat, test_y)
+
+accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
+class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
+class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
 
 
+# multinomial lasso classifier
+lasso_model <- cv.glmnet(training_X, training_y, alpha = 1,
+                         family="multinomial", parallel=TRUE,
+                         type.measure = "class")
+plot(lasso_model)
+
+# evaluation
+# Prediction
+test_y_hat <- predict(lasso_model, test_X, type="class")
+
+# Confusion matrix
+table(test_y_hat, test_y)
+
+accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
+class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
+class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
+
+# Elastic Net
+elasticnet_model <- cv.glmnet(training_X, training_y, 
+                         family="multinomial", alpha=0.5, 
+                         parallel=TRUE, type.measure = "class")
+plot(elasticnet_model)
+
+# evaluation
+# Prediction
+test_y_hat <- predict(elasticnet_model, test_X, type="class")
+
+# Confusion matrix
+table(test_y_hat, test_y)
+
+accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
+class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
+class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
 
 ## Naive Bayes
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-nb <- textmodel_nb(training_X, training_y)
+nb <- textmodel_nb(training_X, training_y, 
+                   distribution = "multinomial", 
+                   prior = "termfreq")
 
 preds <- predict(nb, newdata = test_X)
 table(preds, test_y)
@@ -360,37 +290,38 @@ head(as.character(covid_corpus)[test_idx[which(preds == 2)]])
 probs <- get_posterior(nb)
 probs[,c("freedom", "jobs", "deaths", "protect", "shield")]
 
-## Support-Vector Machines
+## Predictions on unclassified speeches
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-library(e1071)
-library(ROCR)
+classified_indices <- classified_texts$textid
+unclassified_indices <- setdiff(rownames(dfm), training_indices)
 
-# tuning svm hyperparameters
-tune.out <- tune(svm, 
-                 train.x = training_X, 
-                 train.y = training_y,
-                 kernel="radial", 
-                 ranges = list(
-                   gamma=c(2,5),
-                   cost = c(10, 20),
-                   tunecontrol = tune.control(
-                     random = T, sampling = "cross"
-                     ),
-                   cross = 5))
+unclassified_X <- dfm[unclassified_indices,]
+unclassified_predictions <- predict(rf_model, unclassified_X)$predictions
+dfm_preds <- dfm[unclassified_indices,]
+docvars(dfm_preds, "predictions") <- unclassified_predictions
 
-svm_model <- svm(y = training_y, 
-                 x = training_X, 
-                 cost = 10,
-                 gamma = 5, 
-                 kernel = "radial",
-                 type = "C")
+preds_df <- docvars(dfm_preds, c("predictions", 
+                                 "date", 
+                                 "Party", 
+                                 "Constituency")) %>%
+  arrange(date) %>%
+  mutate(support = ifelse(predictions == 1, 1, 0)) %>%
+  mutate(criticize = ifelse(predictions == 2, 1, 0)) %>%
+  mutate(neither = ifelse(predictions == 3, 1, 0)) %>%
+  # MDK figure out how to group by week
+ # mutate(week = (as.numeric(date) %/% 7) - 
+ # (as.numeric(min(date)) %/% 7)) %>%
+  group_by(date) %>%
+  summarise(support = (sum(support)/n()),
+            criticize = (sum(criticize)/n()),
+            neither = (sum(neither)/n())) %>%
+  pivot_longer(cols = c("support", "criticize", "neither"), 
+               names_to = "predictions") %>%
+  filter(predictions != 'neither')
 
-test_y_hat <- predict(svm_model, test_X)
-cm_svm <- table(test_y_hat, test_y)
-
-accuracy <- get_acc_F1(cm_svm)[[1]]
-class_1_F1 <- get_acc_F1(cm_svm)[[2]]
-class_2_F1 <- get_acc_F1(cm_svm)[[3]]
-
-
+# plot
+ggplot(data = preds_df, aes(x = date, 
+                                     y = value, 
+                                     group = predictions)) + 
+  geom_line(aes(colour = predictions))
