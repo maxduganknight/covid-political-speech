@@ -292,8 +292,6 @@ probs[,c("freedom", "jobs", "deaths", "protect", "shield")]
 
 ## Predictions on unclassified speeches
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-library(lubridate)
-
 
 classified_indices <- classified_texts$textid
 unclassified_indices <- setdiff(rownames(dfm), training_indices)
@@ -302,63 +300,8 @@ unclassified_X <- dfm[unclassified_indices,]
 unclassified_predictions <- predict(rf_model, unclassified_X)$predictions
 dfm_preds <- dfm[unclassified_indices,]
 docvars(dfm_preds, "predictions") <- unclassified_predictions
-
-# look at predictions over time
-preds_df_time <- docvars(dfm_preds, c("predictions", 
+preds_df <- docvars(dfm_preds, c("predictions", 
                                  "date", 
                                  "Party", 
-                                 "Constituency")) %>%
-  arrange(date) %>%
-  mutate(support = ifelse(predictions == 1, 1, 0)) %>%
-  mutate(criticize = ifelse(predictions == 2, 1, 0)) %>%
-  mutate(neither = ifelse(predictions == 3, 1, 0)) %>%
-  group_by(week = week(date)) %>%
-  summarise(support = (sum(support)/n()),
-            criticize = (sum(criticize)/n()),
-            neither = (sum(neither)/n())) %>%
-  pivot_longer(cols = c("support", "criticize", "neither"), 
-               names_to = "predictions") %>%
-  filter(predictions != 'neither')
-
-# plot
-ggplot(data = preds_df_time, aes(x = week, 
-                                     y = value, 
-                                     group = predictions)) + 
-  geom_line(aes(colour = predictions))
-
-# look at predictions by party
-preds_df_party <- docvars(dfm_preds, c("predictions", 
-                                      "date", 
-                                      "Party", 
-                                      "Constituency")) %>%
-  mutate(support = ifelse(predictions == 1, 1, 0)) %>%
-  mutate(criticize = ifelse(predictions == 2, 1, 0)) %>%
-  mutate(neither = ifelse(predictions == 3, 1, 0)) %>%
-  group_by(Party) %>%
-  summarise(ratio = sum(criticize)/sum(support)) %>%
-  arrange(ratio) %>%
-  filter(!is.na(Party)) %>%
-  filter(!Party %in% c("Speaker", "Social Democratic and Labour Party", 
-                       "Independent", "Alliance", 
-                       "Social Democratic and Labour Party", "Plaid Cymru",
-                       "Labour/Co-operative"))
-  
-# plot
-ggplot(data = preds_df_party, aes(x = ratio, 
-                            y = reorder(Party, ratio), fill = Party)) + 
-  geom_bar(stat = "identity") +
-  scale_fill_manual("legend",
-                    values = c("Conservative" = "blue",
-                               "Labour" = "red",
-                               "Liberal Democrat" = "orange",
-                               "Green" = "green",
-                               "Scottish National Party" = "yellow",
-                               "DUP" = "dark red",
-                               "Plaid Cymru" = "dark green",
-                               "Independent" = "purple")) +
-  labs(title = "Attitude Towards COVID Restrictions by Party", 
-       y = "Party", x = "Ratio of Speeches Critical of Restrictions to 
-       Speeches Supportive of Restrictions") +
-  theme(legend.position = "none", axis.title.y = element_blank())
-
-
+                                 "Constituency"))
+write.csv(preds_df, "data/predictions.csv")
