@@ -85,13 +85,14 @@ preds_df_time <- preds_df %>%
 ggplot(data = preds_df_time, aes(x = week, 
                                  y = value, 
                                  group = predictions)) + 
-  geom_line(aes(colour = predictions))
+  geom_line(aes(colour = predictions)) +
+  labs(title = "Supportive and Critical Speeches Over Time",
+       y = "Proportion out of all COVID-19-related Speeches")
+
+ggsave(filename = "visualizations/predictions_over_time.png")
 
 # predictions by party
-preds_df_party <- docvars(dfm_preds, c("predictions", 
-                                       "date", 
-                                       "Party", 
-                                       "Constituency")) %>%
+preds_df_party <- preds_df %>%
   mutate(support = ifelse(predictions == 1, 1, 0)) %>%
   mutate(criticize = ifelse(predictions == 2, 1, 0)) %>%
   mutate(neither = ifelse(predictions == 3, 1, 0)) %>%
@@ -118,6 +119,61 @@ ggplot(data = preds_df_party, aes(x = ratio,
                                "Plaid Cymru" = "dark green",
                                "Independent" = "purple")) +
   labs(title = "Attitude Towards COVID Restrictions by Party", 
-       y = "Party", x = "Ratio of  Critical Speehces to Supportive Speeches") +
+       y = "Party", x = "Ratio of  Critical Speeches to Supportive Speeches") +
   theme(legend.position = "none", axis.title.y = element_blank())
+
+ggsave(filename = "visualizations/predictions_by_party.png")
+
+# UK map of predictions by constituency
+# CITATION: https://cran.r-project.org/web/packages/parlitools/vignettes/introduction.html
+
+library(parlitools)
+library(leaflet)
+
+preds_df_constituency <- preds_df %>%
+  mutate(support = ifelse(predictions == 1, 1, 0)) %>%
+  mutate(criticize = ifelse(predictions == 2, 1, 0)) %>%
+  mutate(neither = ifelse(predictions == 3, 1, 0)) %>%
+  group_by(Constituency) %>%
+  summarise(ratio = sum(criticize)/sum(support), 
+            criticize = sum(criticize),
+            support = sum(support))
+
+west_hex_map <- parlitools::west_hex_map
+
+#Join colours to hexagon map
+west_hex_map <- left_join(west_hex_map, preds_df_constituency, 
+                          by = c("constituency_name" = "Constituency")) 
+
+# Creating map labels
+labels <- paste0(
+  "<strong>", west_hex_map$constituency_name, "</strong>", "</br>",
+  "Ratio: ", west_hex_map$ratio, "</br>",
+  "Supporting Speeches: ", west_hex_map$support, "</br>",
+  "Critical Speeches: ", west_hex_map$criticize
+) %>% lapply(htmltools::HTML)
+
+bins <- c(0, 0.05, 0.1, 0.15, 0.2, 0.3, 1, 4, Inf)
+pal <- colorBin("YlOrRd", domain = preds_df_constituency$ratio, bins = bins)
+
+# Creating the map itself
+leaflet(options=leafletOptions(
+  dragging = FALSE, zoomControl = FALSE, tap = FALSE,
+  minZoom = 6, maxZoom = 6, maxBounds = list(list(2.5,-7.75),list(58.25,50.0)),
+  attributionControl = FALSE),
+  west_hex_map) %>%
+  addPolygons(
+    color = "grey",
+    weight=0.75,
+    opacity = 0.5,
+    fillOpacity = 1,
+    fillColor = ~pal(ratio),
+    label=labels) %>%
+  htmlwidgets::onRender(
+    "function(x, y) {
+        var myMap = this;
+        myMap._container.style['background'] = '#fff';
+    }")%>%
+  mapOptions(zoomToLimits = "first")
+
 
