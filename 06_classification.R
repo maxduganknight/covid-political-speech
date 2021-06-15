@@ -71,14 +71,15 @@ covid_corpus <-  corpus_subset(corpus, grepl(paste(covid_keywords,collapse = "|"
 dfm <- covid_corpus %>%
   tokens(remove_punct = TRUE, remove_numbers = TRUE, remove_symbols = TRUE) %>%
   tokens_tolower() %>%
-  #tokens_select(min_nchar = 2) %>%
+  # tokens_compound(pattern = phrase(c("long covid", "mental health", 
+  #                                    "covid secure", "live sports"))) %>%
+  tokens_select(min_nchar = 2) %>%
   # for some reason there were a lot of words connected by .
   tokens_split(separator = ".", remove_separator = TRUE) %>% 
   tokens_remove(stopwords("en"), padding = FALSE) %>%
   dfm() %>%
   dfm_trim(min_termfreq = 5, min_docfreq = 2) %>% 
   dfm_weight(scheme = "prop")
-dfm
 
 #sort columns in case order changes while running
 dfm <- dfm[,sort(featnames(dfm))]
@@ -156,8 +157,8 @@ print(mean(accuracy))
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # training and test sets
-set.seed(123)
-test_fraction <- 0.2
+set.seed(456)
+test_fraction <- 0.3
 training_rows <- labelled[sample(nrow(labelled), 
                                  floor(nrow(labelled)*(1-test_fraction))),]
 
@@ -183,7 +184,21 @@ training_rows_balanced <- rbind(
     class_3_size, class_1_size),]
 ) 
 
+# attempt to set the number of class 2 speeches. Not clear if it helps
+
+# training_rows_balanced <- rbind(
+#   training_rows[training_rows$label == 1,],
+#   training_rows[training_rows$label == 2,][sample(
+#     class_2_size, class_1_size*(4/5)),],
+#   training_rows[training_rows$label == 3,][sample(
+#     class_3_size, class_1_size),]
+# ) 
+
+
 training_indices <- rownames(training_rows_balanced)
+
+# unbalanced training data for tuning
+#training_indices <- rownames(training_rows)
 
 training_X <- dfm[training_indices,]
 training_y <- labelled[training_indices, "label"]
@@ -194,6 +209,7 @@ test_y <- labelled[testing_indices, "label"]
 ## Random Forest: ranger
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+set.seed(1)
 rf_model <- ranger(x = training_X, y = factor(training_y))
 test_y_hat <- predict(rf_model, test_X)$predictions
 
@@ -201,14 +217,54 @@ test_y_hat <- predict(rf_model, test_X)$predictions
 table(test_y_hat, test_y)
 
 # performance metrics
-accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
-class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
-class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
+
+# accuracy
+get_acc_F1(table(test_y_hat, test_y))[[1]]
+
+# class 1 F1
+get_acc_F1(table(test_y_hat, test_y))[[2]]
+
+# class 2 F1
+get_acc_F1(table(test_y_hat, test_y))[[3]]
 
 #feature importance
-rf_model <- ranger(x = training_X, y = factor(training_y),
+rf_model_importance <- ranger(x = training_X, y = training_y,
                    importance = "impurity")
-importance(rf_model) %>% sort(decreasing = TRUE) %>% head(20)
+rf_model_importance$variable.importance %>% 
+  sort(decreasing = TRUE) %>% 
+  head(30)
+
+# examine results
+results <- as.data.frame(cbind(testing_indices, test_y, test_y_hat))
+
+head(as.character(covid_corpus)[results$testing_indices[which(
+  test_y == "2" & test_y_hat == "1"
+  )]], 10)
+
+## Tuning Random Forest
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+library(caret)
+registerDoMC(cores=8) # adjust
+mtry <- sqrt(ncol(training_X))
+control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        repeats=2,
+                        allowParallel = TRUE,
+                        search = "grid")
+#Metric compare model is Accuracy
+set.seed(123)
+#Tuning mtry
+tunegrid <- expand.grid(.mtry = c(50, 500, 1000, 2000, 5000, 10000)) 
+rf_tune <- train(x = as.matrix(training_X),
+                    y = factor(training_y),
+                    method='rf', 
+                    metric='Accuracy', 
+                    tuneGrid = tunegrid, 
+                    ntree = 50)
+
+# tuning mtry suggests ~2000. I am able to get higher accuracy with larger numbers
+# but the increase past 2000 is marginal and may risk over-fitting. 
 
 ## Regularized Regressions
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -227,9 +283,15 @@ test_y_hat <- predict(ridge_model, test_X, type="class")
 # Confusion matrix
 table(test_y_hat, test_y)
 
-accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
-class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
-class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
+# accuracy
+get_acc_F1(table(test_y_hat, test_y))[[1]]
+
+# class 1 F1
+get_acc_F1(table(test_y_hat, test_y))[[2]]
+
+# class 2 F1
+get_acc_F1(table(test_y_hat, test_y))[[3]]
+
 
 
 # multinomial lasso classifier
@@ -245,9 +307,14 @@ test_y_hat <- predict(lasso_model, test_X, type="class")
 # Confusion matrix
 table(test_y_hat, test_y)
 
-accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
-class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
-class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
+# accuracy
+get_acc_F1(table(test_y_hat, test_y))[[1]]
+
+# class 1 F1
+get_acc_F1(table(test_y_hat, test_y))[[2]]
+
+# class 2 F1
+get_acc_F1(table(preds, test_y_hat))[[3]]
 
 # Elastic Net
 elasticnet_model <- cv.glmnet(training_X, training_y, 
@@ -262,9 +329,14 @@ test_y_hat <- predict(elasticnet_model, test_X, type="class")
 # Confusion matrix
 table(test_y_hat, test_y)
 
-accuracy <- get_acc_F1(table(test_y_hat, test_y))[[1]]
-class_1_F1 <- get_acc_F1(table(test_y_hat, test_y))[[2]]
-class_2_F1 <- get_acc_F1(table(test_y_hat, test_y))[[3]]
+# accuracy
+get_acc_F1(table(test_y_hat, test_y))[[1]]
+
+# class 1 F1
+get_acc_F1(table(test_y_hat, test_y))[[2]]
+
+# class 2 F1
+get_acc_F1(table(preds, test_y_hat))[[3]]
 
 ## Naive Bayes
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -276,9 +348,14 @@ nb <- textmodel_nb(training_X, training_y,
 preds <- predict(nb, newdata = test_X)
 table(preds, test_y)
 
-accuracy <- get_acc_F1(table(preds, test_y))[[1]]
-class_1_F1 <- get_acc_F1(table(preds, test_y))[[2]]
-class_2_F1 <- get_acc_F1(table(preds, test_y))[[3]]
+# accuracy
+get_acc_F1(table(preds, test_y))[[1]]
+
+# class 1 F1
+get_acc_F1(table(preds, test_y))[[2]]
+
+# class 2 F1
+get_acc_F1(table(preds, test_y))[[3]]
 
 # original texts that were classified as 1
 head(as.character(covid_corpus)[test_idx[which(preds == 1)]])

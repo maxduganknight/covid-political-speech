@@ -60,36 +60,48 @@ ggplot(data = cases_keywords, aes(x = date, y = value)) +
         axis.title.y = element_blank()) +
   labs(x = "Date", 
        title = "MPs' Language Has Mirrored Spread of Virus")
-ggsave(filename = "visualizations/cases_keyword_mentions_over_time.png")
+#ggsave(filename = "visualizations/cases_keyword_mentions_over_time.png")
 
 ## Predictions
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-preds_df <- read.csv("data/predictions.csv")
+preds_df <- read.csv("data/predictions.csv") %>%
+  mutate(date = as.Date(date, format = "%Y-%m-%d"))
+  
+cases_df <- read.csv("data/uk_cases.csv") %>%
+  mutate(date = as.Date(date, format = "%d/%m/%Y"))
 
 # look at predictions over time
+# MDK want to add cases data to these portions over time but having problem merging
+
 preds_df_time <- preds_df %>%
   arrange(date) %>%
+  merge(cases_df, by = "date", all.x = TRUE) %>%
+  select(-Entity, -Code, -X) %>%
+  mutate(cases = round(cases)) %>%
   mutate(support = ifelse(predictions == 1, 1, 0)) %>%
   mutate(criticize = ifelse(predictions == 2, 1, 0)) %>%
   mutate(neither = ifelse(predictions == 3, 1, 0)) %>%
-  group_by(week = week(date)) %>%
-  summarise(support = (sum(support)/n()),
-            criticize = (sum(criticize)/n()),
-            neither = (sum(neither)/n())) %>%
-  pivot_longer(cols = c("support", "criticize", "neither"), 
-               names_to = "predictions") %>%
-  filter(predictions != 'neither')
+  mutate(week = week(date)) %>%
+  group_by(week) %>%
+  summarise(date = as.Date(last(date)),
+            support = sum(support)/n(),
+            criticize = sum(criticize)/n(),
+            cases = sum(cases)) %>%
+  pivot_longer(cols = c("support", "criticize"), 
+               names_to = "predictions")
 
 # plot predictions over time
-ggplot(data = preds_df_time, aes(x = week, 
+ggplot(data = preds_df_time, aes(x = date, 
                                  y = value, 
                                  group = predictions)) + 
   geom_line(aes(colour = predictions)) +
   labs(title = "Supportive and Critical Speeches Over Time",
-       y = "Proportion out of all COVID-19-related Speeches")
+       y = "Proportion out of all COVID-19-related Speeches") +
+  scale_x_date(name = "Date", date_labels = "%b %y", date_breaks = "1 month") +
+  theme(axis.text.x = element_text(angle=45, hjust = 1))
 
-ggsave(filename = "visualizations/predictions_over_time.png")
+#ggsave(filename = "visualizations/predictions_over_time.png")
 
 # predictions by party
 preds_df_party <- preds_df %>%
