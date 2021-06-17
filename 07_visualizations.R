@@ -6,6 +6,7 @@ library(stm)
 library(quanteda.textmodels)
 library(dplyr)
 library(ggplot2)
+library(lubridate)
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
@@ -71,35 +72,44 @@ preds_df <- read.csv("data/predictions.csv") %>%
 cases_df <- read.csv("data/uk_cases.csv") %>%
   mutate(date = as.Date(date, format = "%d/%m/%Y"))
 
+stringency_df <- read.csv("data/oxford_stringency_index.csv") %>%
+  select(date, stringency) %>%
+  mutate(date = as.Date(date, format = "%d-%b-%y"))
+  
+
 # look at predictions over time
-# MDK want to add cases data to these portions over time but having problem merging
 
 preds_df_time <- preds_df %>%
-  arrange(date) %>%
   merge(cases_df, by = "date", all.x = TRUE) %>%
-  select(-Entity, -Code, -X) %>%
+  merge(stringency_df, by = "date", all.x = TRUE) %>%
+  select(-Entity, -Code, -X, -Party, -Constituency) %>%
   mutate(cases = round(cases)) %>%
   mutate(support = ifelse(predictions == 1, 1, 0)) %>%
   mutate(criticize = ifelse(predictions == 2, 1, 0)) %>%
   mutate(neither = ifelse(predictions == 3, 1, 0)) %>%
+  group_by(date, cases, stringency) %>%
+  summarise(support = sum(support), 
+            criticize = sum(criticize)) %>%
   mutate(week = week(date)) %>%
   group_by(week) %>%
   summarise(date = as.Date(last(date)),
             support = sum(support)/n(),
             criticize = sum(criticize)/n(),
-            cases = sum(cases)) %>%
-  pivot_longer(cols = c("support", "criticize"), 
-               names_to = "predictions")
+            cases = sum(cases),
+            stringency = mean(stringency, na.rm = TRUE)) %>%
+  pivot_longer(cols = c("support", "criticize", "cases", "stringency"), 
+               names_to = "type")
 
 # plot predictions over time
-ggplot(data = preds_df_time, aes(x = date, 
-                                 y = value, 
-                                 group = predictions)) + 
-  geom_line(aes(colour = predictions)) +
+ggplot(data = preds_df_time, aes(x = date, y = value)) + 
+  geom_line(aes(colour = type)) +
   labs(title = "Supportive and Critical Speeches Over Time",
        y = "Proportion out of all COVID-19-related Speeches") +
   scale_x_date(name = "Date", date_labels = "%b %y", date_breaks = "1 month") +
+  facet_grid(rows = vars(type), scales = "free_y") +
   theme(axis.text.x = element_text(angle=45, hjust = 1))
+
+#MDK not exactly sure what to make of this but it is interesting.
 
 #ggsave(filename = "visualizations/predictions_over_time.png")
 
