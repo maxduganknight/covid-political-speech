@@ -13,7 +13,6 @@ get_lat_lng <- function(place_id) {
     place_id
     )  
   res <- GET(url)
-  print(res)
   data = fromJSON(rawToChar(res$content))
   lat <- data$result$geometry$location$lat
   lng <- data$result$geometry$location$lng
@@ -71,9 +70,10 @@ place_to_la  <- distance_matrix  %>%
   filter(distance == min(distance))
 
 google  <- read_csv(
-  "data/google_mobility/google_maps_locations.csv") 
+  "data/google_mobility/google_maps_locations.csv"
+  ) 
 
-lookup  <- boundaries  %>% 
+google_place_lookup  <- boundaries  %>% 
   select(
     area_name = LAD20NM,
     area_code = LAD20CD 
@@ -84,37 +84,43 @@ lookup  <- boundaries  %>%
              by = "place_id")
 
 
-# write_csv(lookup,
-#           "data/google_mobility/google_place_id_to_lad_lookup.csv")
+# write_csv(google_place_lookup,
+#            "data/google_mobility/google_place_id_to_lad_lookup.csv")
 
 google_place_lookup <- read.csv(
   "data/google_mobility/google_place_id_to_lad_lookup.csv"
   ) %>%
-  select(area_name, name)
-
-preds_df <- read.csv("data/predictions.csv") %>%
-  mutate(date = as.Date(date, format = "%Y-%m-%d"))
+  distinct(place_id, .keep_all = TRUE)
 
 # got this look up from 
 # https://geoportal.statistics.gov.uk/datasets/ward-to-westminster-parliamentary-constituency-to-local-authority-district-december-2016-lookup-in-the-united-kingdom/explore
 la_constituency_lookup <- read.csv(
   "data/google_mobility/la_constituency_lookup.csv"
 )
-  
-preds_df <- preds_df %>%
+
+
+preds_df <- read.csv("data/predictions.csv") %>%
+  mutate(date = as.Date(date, format = "%Y-%m-%d")) %>%  
   merge(la_constituency_lookup, 
         by.x = "Constituency", 
         by.y = "constituency",
         all.x = TRUE) %>%
   select(-X) %>%
-   merge(google_place_lookup,
+  merge(google_place_lookup,
         by.x = "local_authority", 
         by.y = "area_name",
         all.x = TRUE) %>%
-  rename("google_place" = "name")
+  rename("google_place" = "name") %>%
+  select(-geometry) 
 
-# MDK need to now use google place column to merge with google mobility data 
+# match google mobility data on place_id
 
-length(setdiff(unique(preds_df$google_place), unique(google_mobility$sub_region_2)))
+combined_df <- preds_df %>%
+  merge(
+    google_mobility, 
+    by = c("place_id", "date")
+    ) 
+
+write_csv(combined_df, "data/google_mobility/preds_mobility_combined.csv")
 
 
