@@ -203,13 +203,13 @@ training_indices <- rownames(training_rows_balanced)
 training_X <- dfm[training_indices,]
 training_y <- labelled[training_indices, "label"]
 
-test_X <- dfm[testing_indices,]
+test_X <- dfm[testing_indices,] 
 test_y <- labelled[testing_indices, "label"]
 
 ## Random Forest: ranger
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-set.seed(1)
+set.seed(8)
 rf_model <- ranger(x = training_X, y = factor(training_y))
 test_y_hat <- predict(rf_model, test_X)$predictions
 
@@ -366,6 +366,51 @@ head(as.character(covid_corpus)[test_idx[which(preds == 2)]])
 
 probs <- get_posterior(nb)
 probs[,c("freedom", "jobs", "deaths", "protect", "shield")]
+
+
+## XGBoost
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+library(xgboost)
+
+training_y <- training_y - 1
+test_y <- test_y - 1
+
+xgb.train = xgb.DMatrix(data=training_X,label=training_y)
+xgb.test = xgb.DMatrix(data=test_X,label=test_y)
+
+params = list(
+  booster="gbtree",
+  eta=0.001,
+  max_depth=5,
+  gamma=3,
+  subsample=0.75,
+  colsample_bytree=1,
+  objective="multi:softprob",
+  eval_metric="mlogloss",
+  num_class=3
+)
+
+xgb.fit=xgb.train(
+  params=params,
+  data=xgb.train,
+  nrounds=10000,
+  nthreads=1,
+  early_stopping_rounds=10,
+  watchlist=list(val1=xgb.train,val2=xgb.test),
+  verbose=0
+)
+
+test_pred <- predict(xgb.fit, newdata = test_X)
+test_prediction <- matrix(test_pred, nrow = 3,
+                          ncol=length(test_pred)/3) %>%
+  t() %>%
+  data.frame() %>%
+  mutate(label = test_y + 1,
+         max_prob = max.col(., "last"))
+# confusion matrix of test set
+confusionMatrix(factor(test_prediction$max_prob),
+                factor(test_prediction$label),
+                mode = "everything")
 
 ## Predictions on unclassified speeches
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
