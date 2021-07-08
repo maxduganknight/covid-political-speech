@@ -9,7 +9,8 @@ setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
 get_lat_lng <- function(place_id) {
   url <- sprintf(
-    'https://maps.googleapis.com/maps/api/place/details/json?place_id=%s&fields=name,geometry&key=AIzaSyAfBSxjLVZrt-f0FPiyHKEZKQNhBUArba0', 
+    # edit url below to add api key at end of url
+    'https://maps.googleapis.com/maps/api/place/details/json?place_id=%s&fields=name,geometry&key=', 
     place_id
     )  
   res <- GET(url)
