@@ -7,6 +7,7 @@ library(quanteda.textmodels)
 library(dplyr)
 library(ggplot2)
 library(lubridate)
+library(zoo)
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
@@ -55,13 +56,13 @@ cases_keywords <- read.csv("data/uk_cases.csv", header = TRUE) %>%
 
 ggplot(data = cases_keywords, aes(x = date, y = value)) + 
   geom_bar(stat = "identity", aes(color = type)) +
-  facet_grid(rows = vars(type), scales = "free_y") +
+  facet_grid(rows = vars(type), scales = "free_y", ) +
   scale_color_manual( values = c("red3", "royalblue3")) +
   theme(legend.title=element_blank(), legend.position = "none",
-        axis.title.y = element_blank()) +
+        axis.title.y = element_blank(), strip.text.y = element_text(size = 18)) +
   labs(x = "Date", 
        title = "MPs' Language Has Mirrored Spread of Virus")
-#ggsave(filename = "visualizations/cases_keyword_mentions_over_time.png")
+#ggsave(filename = "visualizations/cases_keywords.png")
 
 ## Predictions
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -109,8 +110,6 @@ ggplot(data = preds_df_time, aes(x = date, y = value)) +
   facet_grid(rows = vars(type), scales = "free_y") +
   theme(axis.text.x = element_text(angle=45, hjust = 1))
 
-#MDK not exactly sure what to make of this but it is interesting.
-
 #ggsave(filename = "visualizations/predictions_over_time.png")
 
 # predictions by party
@@ -140,11 +139,11 @@ ggplot(data = preds_df_party, aes(x = ratio,
                                "DUP" = "dark red",
                                "Plaid Cymru" = "dark green",
                                "Independent" = "purple")) +
-  labs(title = "Attitude Towards COVID Restrictions by Party", 
-       y = "Party", x = "Ratio of  Critical Speeches to Supportive Speeches") +
+  labs(title = "How Critical is Each Party of Restrictions?", 
+       y = "Party", x = "Ratio of Critical Speeches to Supportive Speeches") +
   theme(legend.position = "none", axis.title.y = element_blank())
 
-ggsave(filename = "visualizations/predictions_by_party.png")
+#ggsave(filename = "visualizations/predictions_by_party.png")
 
 # UK map of predictions by constituency
 # CITATION: https://cran.r-project.org/web/packages/parlitools/vignettes/introduction.html
@@ -198,4 +197,32 @@ leaflet(options=leafletOptions(
     }")%>%
   mapOptions(zoomToLimits = "first")
 
+## Google Mobility
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+preds_df_google <- read.csv("data/google_mobility/preds_mobility_combined.csv") %>%
+  mutate(combined_mobility = rowMeans(select(.,
+    retail_and_recreation_percent_change_from_baseline,
+    grocery_and_pharmacy_percent_change_from_baseline,
+    transit_stations_percent_change_from_baseline,
+    workplaces_percent_change_from_baseline
+    ))) %>%
+  mutate(date = as.Date(date, format = "%Y-%m-%d")) %>%
+  filter(predictions != 3) %>%
+  group_by(predictions, date) %>%
+  summarise(combined_mobility = mean(combined_mobility))%>%
+  select(date, predictions, combined_mobility) %>%
+  mutate(predictions = as.factor(predictions))
+
+
+# MDK this visualization does not show any correlation really
+ggplot(data = preds_df_google, 
+       aes(x = date, y = combined_mobility, 
+           colour = predictions, group = predictions)) + 
+  geom_line() +
+  labs(title = "Mobility Change vs. MP Attitude Towards Restrictions",
+       y = "Mobility % Change from Baseline") +
+  scale_x_date(name = "Date", date_labels = "%b %y", date_breaks = "1 month") +
+  theme(axis.text.x = element_text(angle=45, hjust = 1))
+  
+  

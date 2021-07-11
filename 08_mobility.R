@@ -7,11 +7,14 @@ library(geodist)
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
+google_api_key <- read.csv("creds.csv")[[1,2]]
+
 get_lat_lng <- function(place_id) {
   url <- sprintf(
     # edit url below to add api key at end of url
-    'https://maps.googleapis.com/maps/api/place/details/json?place_id=%s&fields=name,geometry&key=', 
-    place_id
+    'https://maps.googleapis.com/maps/api/place/details/json?place_id=%s&fields=name,geometry&key=%s', 
+    place_id,
+    google_api_key
     )  
   res <- GET(url)
   data = fromJSON(rawToChar(res$content))
@@ -24,6 +27,9 @@ get_lat_lng <- function(place_id) {
 google_mobility <- read.csv(
   "data/google_mobility/2021_GB_Region_Mobility_Report.csv"
   ) %>%
+  rbind(read.csv(
+    "data/google_mobility/2020_GB_Region_Mobility_Report.csv"
+    )) %>%
   select(date, sub_region_1, sub_region_2, place_id,
          retail_and_recreation_percent_change_from_baseline,
          grocery_and_pharmacy_percent_change_from_baseline,
@@ -35,6 +41,7 @@ google_mobility <- read.csv(
 
 # get lat and long values and store in lookup df
 # MDK don't rerun this because I'm out of GCP credit
+
 place_id <- unique(google_mobility$place_id)
 lat_lng <- lapply(place_id, get_lat_lng)
 place_lookup <- cbind(place_id, lat_lng)
@@ -43,6 +50,9 @@ place_lookup <- cbind(place_id, lat_lng)
 google_mobility <- google_mobility %>%
   merge(place_lookup, by = "place_id") %>%
   separate(lat_lng, into = c("LAT", "LONG"), sep = "_")
+# 
+# write_csv(google_mobility, file = "data/google_mobility.csv")
+google_mobility <- read.csv("data/google_mobility.csv")
 
 boundaries  <- st_read(
   "data/google_mobility/Local_Authority_Districts_(December_2020)_UK_BUC/Local_Authority_Districts_(December_2020)_UK_BUC.shp"
@@ -82,16 +92,19 @@ google_place_lookup  <- boundaries  %>%
   inner_join(place_to_la,
              by = "area_code")  %>% 
   inner_join(google, 
-             by = "place_id")
+             by = "place_id") %>%
+  data.frame() %>%
+  distinct(place_id, .keep_all = T) %>%
+  select(-geometry)
 
 
-# write_csv(google_place_lookup,
-#            "data/google_mobility/google_place_id_to_lad_lookup.csv")
+
+write.csv(google_place_lookup_df,
+           "data/google_mobility/google_place_id_to_lad_lookup.csv")
 
 google_place_lookup <- read.csv(
   "data/google_mobility/google_place_id_to_lad_lookup.csv"
-  ) %>%
-  distinct(place_id, .keep_all = TRUE)
+  ) 
 
 # got this look up from 
 # https://geoportal.statistics.gov.uk/datasets/ward-to-westminster-parliamentary-constituency-to-local-authority-district-december-2016-lookup-in-the-united-kingdom/explore
@@ -102,6 +115,7 @@ la_constituency_lookup <- read.csv(
 
 preds_df <- read.csv("data/predictions.csv") %>%
   mutate(date = as.Date(date, format = "%Y-%m-%d")) %>%  
+  filter(!is.na(Constituency)) %>%
   merge(la_constituency_lookup, 
         by.x = "Constituency", 
         by.y = "constituency",
@@ -109,10 +123,8 @@ preds_df <- read.csv("data/predictions.csv") %>%
   select(-X) %>%
   merge(google_place_lookup,
         by.x = "local_authority", 
-        by.y = "area_name",
-        all.x = TRUE) %>%
-  rename("google_place" = "name") %>%
-  select(-geometry) 
+        by.y = "area_name") %>%
+  rename("google_place" = "name") 
 
 # match google mobility data on place_id
 
@@ -122,6 +134,7 @@ combined_df <- preds_df %>%
     by = c("place_id", "date")
     ) 
 
-write_csv(combined_df, "data/google_mobility/preds_mobility_combined.csv")
+#write.csv(combined_df, "data/google_mobility/preds_mobility_combined.csv")
+
 
 

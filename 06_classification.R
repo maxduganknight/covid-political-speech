@@ -8,6 +8,7 @@ library(dplyr)
 library(glmnet)
 library(doMC)
 library(ranger)
+library(xgboost)
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
@@ -55,7 +56,7 @@ get_posterior <- function(nb) {
   PwGc
 }
 
-## Text Processing
+## Text Pre-processing
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 speeches <- readRDS("data/covid_speeches.rds")
@@ -158,7 +159,7 @@ print(mean(accuracy))
 
 # training and test sets
 set.seed(456)
-test_fraction <- 0.3
+test_fraction <- 0.2
 training_rows <- labelled[sample(nrow(labelled), 
                                  floor(nrow(labelled)*(1-test_fraction))),]
 
@@ -245,26 +246,61 @@ head(as.character(covid_corpus)[results$testing_indices[which(
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 library(caret)
+library(MLmetrics)
 registerDoMC(cores=8) # adjust
+
+training_y <- replace(training_y, training_y == 1, "support")
+training_y <- replace(training_y, training_y == 2, "criticise")
+training_y <- replace(training_y, training_y == 3, "neither")
+
+test_y <- replace(test_y, test_y == 1, "support")
+test_y <- replace(test_y, test_y == 2, "criticise")
+test_y <- replace(test_y, test_y == 3, "neither")
+
+
 mtry <- sqrt(ncol(training_X))
+
+f1 <- function(data, lev = NULL, model = NULL) {
+  class_1_f1 <- F1_Score(y_pred = data$pred, y_true = data$obs, positive = lev[1])
+  class_2_f1 <- F1_Score(y_pred = data$pred, y_true = data$obs, positive = lev[2])
+  c(F1 = mean(c(class_1_f1, class_2_f1)))
+}
+
 control <- trainControl(method='repeatedcv', 
                         number=5, 
                         repeats=2,
                         allowParallel = TRUE,
-                        search = "grid")
+                        #mtry = 126,
+                        summaryFunction = f1,
+                        classProbs = F)
 #Metric compare model is Accuracy
 set.seed(123)
 #Tuning mtry
-tunegrid <- expand.grid(.mtry = c(50, 500, 1000, 2000, 5000, 10000)) 
 rf_tune <- train(x = as.matrix(training_X),
                     y = factor(training_y),
                     method='rf', 
-                    metric='Accuracy', 
-                    tuneGrid = tunegrid, 
-                    ntree = 50)
+                    metric='F1', 
+                    ntree = 500,
+                    trControl = control)
 
-# tuning mtry suggests ~2000. I am able to get higher accuracy with larger numbers
-# but the increase past 2000 is marginal and may risk over-fitting. 
+
+test_y_hat <- predict(rf_tune, test_X)
+
+# Confusion matrix
+table <- table(test_y_hat, test_y)[c(3,1,2),c(3,1,2)]
+table
+
+# performance metrics
+
+# accuracy
+get_acc_F1(table)[[1]]
+
+# class 1 F1
+get_acc_F1(table)[[2]]
+
+# class 2 F1
+get_acc_F1(table)[[3]]
+
 
 ## Regularized Regressions
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -291,8 +327,6 @@ get_acc_F1(table(test_y_hat, test_y))[[2]]
 
 # class 2 F1
 get_acc_F1(table(test_y_hat, test_y))[[3]]
-
-
 
 # multinomial lasso classifier
 lasso_model <- cv.glmnet(training_X, training_y, alpha = 1,
@@ -370,7 +404,6 @@ probs[,c("freedom", "jobs", "deaths", "protect", "shield")]
 
 ## XGBoost
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-library(xgboost)
 
 training_y <- training_y - 1
 test_y <- test_y - 1
@@ -381,7 +414,7 @@ xgb.test = xgb.DMatrix(data=test_X,label=test_y)
 params = list(
   booster="gbtree",
   eta=0.001,
-  max_depth=5,
+  max_depth=10,
   gamma=3,
   subsample=0.75,
   colsample_bytree=1,
@@ -390,6 +423,7 @@ params = list(
   num_class=3
 )
 
+set.seed(1)
 xgb.fit=xgb.train(
   params=params,
   data=xgb.train,
@@ -412,6 +446,63 @@ confusionMatrix(factor(test_prediction$max_prob),
                 factor(test_prediction$label),
                 mode = "everything")
 
+## XGBoost Hyperparameter Tuning
+## CITATION: 
+## https://towardsdatascience.com/getting-to-an-hyperparameter-tuned-xgboost-model-in-no-time-a9560f8eb54b
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+lowest_error_list = list()
+parameters_list = list()
+
+# Create 10,000 rows with random hyperparameters
+set.seed(20)
+for (iter in 1:15){
+  param <- list(booster = "gbtree",
+                objective = "multi:softprob",
+                max_depth = sample(15:25, 1),
+                gamma = sample(1:10, 1),
+                #subsample = runif(1, .7, 1),
+                colsample_bytree = runif(1, .3, .8)
+                #min_child_weight = runif(1, , 1)
+  )
+  parameters <- as.data.frame(param)
+  parameters_list[[iter]] <- parameters
+}
+
+# Create object that contains all randomly created hyperparameters
+parameters_df = do.call(rbind, parameters_list)
+
+# Use randomly created parameters to create 10,000 XGBoost-models
+for (row in 1:nrow(parameters_df)){
+  set.seed(20)
+  tune <- xgb.train(data=xgb.train,
+                    booster = "gbtree",
+                    objective = "multi:softprob",
+                    max_depth = parameters_df$max_depth[row],
+                    eta = 0.001,
+                    subsample = 1,
+                    min_child_weight = 1,
+                    colsample_bytree = parameters_df$colsample_bytree[row],
+                    nrounds= 300,
+                    eval_metric = "mlogloss",
+                    num_class = 3,
+                    early_stopping_rounds= 30,
+                    print_every_n = 100,
+                    watchlist = list(train= xgb.train, val= xgb.test)
+  )
+  lowest_error <- as.data.frame(1 - min(tune$evaluation_log$val_mlogloss))
+  lowest_error_list[[row]] <- lowest_error
+}
+
+# Create object that contains all accuracy's
+lowest_error_df = do.call(rbind, lowest_error_list)
+
+# Bind columns of accuracy values and random hyperparameter values
+randomsearch = cbind(lowest_error_df, parameters_df)
+
+# Quickly display highest accuracy
+max(randomsearch$`1 - min(tune$evaluation_log$val_mlogloss)`)
+
 ## Predictions on unclassified speeches
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -426,4 +517,5 @@ preds_df <- docvars(dfm_preds, c("predictions",
                                  "date", 
                                  "Party", 
                                  "Constituency"))
+
 write.csv(preds_df, "data/predictions.csv")
