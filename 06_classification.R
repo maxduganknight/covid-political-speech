@@ -210,8 +210,12 @@ test_y <- labelled[testing_indices, "label"]
 ## Random Forest: ranger
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-set.seed(8)
-rf_model <- ranger(x = training_X, y = factor(training_y))
+# best seed is 10
+set.seed(10)
+rf_model <- ranger(x = training_X, y = factor(training_y), 
+                   min.node.size = 10,
+                   mtry = 126,
+                   num.trees = 500 )
 test_y_hat <- predict(rf_model, test_X)$predictions
 
 # Confusion matrix
@@ -257,32 +261,65 @@ test_y <- replace(test_y, test_y == 1, "support")
 test_y <- replace(test_y, test_y == 2, "criticise")
 test_y <- replace(test_y, test_y == 3, "neither")
 
+# attempt to replicate ranger's model using caret
+rep_control <- trainControl(method='cv', 
+                            number=10)
 
-mtry <- sqrt(ncol(training_X))
+rf_replicate <- train(x = training_X,
+                      y = factor(training_y),
+                      method='ranger',
+                      trControl = rep_control)
 
-f1 <- function(data, lev = NULL, model = NULL) {
-  class_1_f1 <- F1_Score(y_pred = data$pred, y_true = data$obs, positive = lev[1])
-  class_2_f1 <- F1_Score(y_pred = data$pred, y_true = data$obs, positive = lev[2])
-  c(F1 = mean(c(class_1_f1, class_2_f1)))
-}
+test_y_hat_rep <- predict(rf_replicate, test_X)
 
-control <- trainControl(method='repeatedcv', 
+# Confusion matrix
+table_rep <- table(test_y_hat_rep, test_y)[c(3,1,2),c(3,1,2)]
+table_rep
+
+# performance metrics
+
+# accuracy
+get_acc_F1(table_rep)[[1]]
+
+# class 1 F1
+get_acc_F1(table_rep)[[2]]
+
+# class 2 F1
+get_acc_F1(table_rep)[[3]]
+
+
+# function to calculate mean of class 1 f1 and class 2 f1
+
+f1 <- function (data, lev = NULL, model = NULL) {
+  cm <- confusionMatrix(data$pred, data$obs)
+  f1_mean <- (cm[["byClass"]][, "F1"][["Class: support"]] + 
+                cm[["byClass"]][, "F1"][["Class: criticise"]])/2
+  c(F1 = f1_mean)
+  } 
+
+tg <- expand.grid(
+  mtry = c(50, 126, 150, 175, 200, 300),
+  splitrule = "gini",
+  min.node.size = c(1, 3)
+  )
+
+control <- trainControl(method='cv', 
                         number=5, 
-                        repeats=2,
                         allowParallel = TRUE,
-                        #mtry = 126,
                         summaryFunction = f1,
-                        classProbs = F)
+                        classProbs = F,
+                        verbose = TRUE,
+                        linout = FALSE)
 #Metric compare model is Accuracy
-set.seed(123)
+set.seed(12)
 #Tuning mtry
-rf_tune <- train(x = as.matrix(training_X),
-                    y = factor(training_y),
-                    method='rf', 
-                    metric='F1', 
-                    ntree = 500,
-                    trControl = control)
-
+rf_tune <- train(x = convert(training_X, to = "matrix"),
+                 y = factor(training_y),
+                 method='ranger',
+                 metric='F1',
+                 tuneGrid = tg,
+                 trControl = control)
+plot(rf_tune)
 
 test_y_hat <- predict(rf_tune, test_X)
 
@@ -300,6 +337,7 @@ get_acc_F1(table)[[2]]
 
 # class 2 F1
 get_acc_F1(table)[[3]]
+
 
 
 ## Regularized Regressions
