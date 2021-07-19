@@ -119,7 +119,8 @@ la_constituency_lookup <- read.csv(
 
 preds_df <- read.csv("data/predictions.csv") %>%
   mutate(date = as.Date(date, format = "%Y-%m-%d")) %>%  
-  filter(!is.na(Constituency)) %>%
+  mutate(predictions = as.factor(predictions)) %>%
+  filter(!is.na(Constituency)) %>% 
   merge(la_constituency_lookup, 
         by.x = "Constituency", 
         by.y = "constituency",
@@ -136,7 +137,38 @@ combined_df <- preds_df %>%
   merge(
     google_mobility, 
     by = c("place_id", "date")
-    ) 
+    ) %>%
+  mutate(mobility_mean = 
+    (retail_and_recreation_percent_change_from_baseline +
+    grocery_and_pharmacy_percent_change_from_baseline +
+    transit_stations_percent_change_from_baseline +
+    workplaces_percent_change_from_baseline)/4
+    )
+
+combined_df %>%
+  select(predictions, mobility_mean) %>%
+  group_by(predictions) %>%
+  summarise(
+    count = n(),
+    mean = mean(mobility_mean, na.rm =TRUE),
+    sd = sd(mobility_mean, na.rm = TRUE)
+  )
+
+# anovas looking at predictions vs mobility
+retail_aov <- aov(retail_and_recreation_percent_change_from_baseline ~ predictions, 
+           data = combined_df)
+
+groc_aov <- aov(grocery_and_pharmacy_percent_change_from_baseline ~ predictions, 
+                data = combined_df)
+
+transit_aov <- aov(transit_stations_percent_change_from_baseline ~ predictions, 
+                data = combined_df)
+
+work_aov <- aov(workplaces_percent_change_from_baseline ~ predictions, 
+                   data = combined_df)
+
+
+
 
 #write.csv(combined_df, "data/google_mobility/preds_mobility_combined.csv")
 
