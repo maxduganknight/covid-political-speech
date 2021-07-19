@@ -233,18 +233,21 @@ get_acc_F1(table(test_y_hat, test_y))[[2]]
 get_acc_F1(table(test_y_hat, test_y))[[3]]
 
 #feature importance
-rf_model_importance <- ranger(x = training_X, y = training_y,
+rf_model <- ranger(x = training_X, y = factor(training_y), 
+                   min.node.size = 10,
+                   mtry = 126,
+                   num.trees = 500,
                    importance = "impurity")
 rf_model_importance$variable.importance %>% 
   sort(decreasing = TRUE) %>% 
-  head(30)
+  head(45)
 
 # examine results
 results <- as.data.frame(cbind(testing_indices, test_y, test_y_hat))
 
-head(as.character(covid_corpus)[results$testing_indices[which(
-  test_y == "2" & test_y_hat == "1"
-  )]], 10)
+sample(as.character(covid_corpus)[results$testing_indices[which(
+  test_y_hat == "1" & test_y == "1"
+  )]], 6)
 
 ## Tuning Random Forest
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -554,6 +557,22 @@ docvars(dfm_preds, "predictions") <- unclassified_predictions
 preds_df <- docvars(dfm_preds, c("predictions", 
                                  "date", 
                                  "Party", 
-                                 "Constituency"))
+                                 "Constituency")) %>%
+  cbind(row.names(dfm_preds)) %>%
+  rename('id' = 'row.names(dfm_preds)')
 
 write.csv(preds_df, "data/predictions.csv")
+
+# examine predictions
+# select random number of speeches predicted to be in each category
+
+# class 1
+covid_corpus[[sample(preds_df[preds_df$predictions == 1, "id"], 1)]]
+
+#class 2
+covid_corpus[[sample(preds_df[preds_df$predictions == 2, "id"], 1)]]
+
+#class 3
+covid_corpus[[sample(preds_df[preds_df$predictions == 3, "id"], 1)]]
+
+

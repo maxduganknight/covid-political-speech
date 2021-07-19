@@ -4,6 +4,7 @@ library(httr)
 library(jsonlite)
 library(sf)
 library(geodist)
+library(lubridate)
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
@@ -52,7 +53,6 @@ google_mobility <- google_mobility %>%
   separate(lat_lng, into = c("LAT", "LONG"), sep = "_")
 # 
 # write_csv(google_mobility, file = "data/google_mobility.csv")
-google_mobility <- read.csv("data/google_mobility.csv")
 
 boundaries  <- st_read(
   "data/google_mobility/Local_Authority_Districts_(December_2020)_UK_BUC/Local_Authority_Districts_(December_2020)_UK_BUC.shp"
@@ -99,8 +99,12 @@ google_place_lookup  <- boundaries  %>%
 
 
 
-write.csv(google_place_lookup_df,
-           "data/google_mobility/google_place_id_to_lad_lookup.csv")
+# write.csv(google_place_lookup,
+#             "data/google_mobility/google_place_id_to_lad_lookup.csv")
+
+
+## START HERE
+google_mobility <- read.csv("data/google_mobility.csv")
 
 google_place_lookup <- read.csv(
   "data/google_mobility/google_place_id_to_lad_lookup.csv"
@@ -136,5 +140,105 @@ combined_df <- preds_df %>%
 
 #write.csv(combined_df, "data/google_mobility/preds_mobility_combined.csv")
 
+## Leicester vs. Manchester
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+## MDK figure out how to compare manchester and leicester on both fronts. 
+leicester_manchester_df <- combined_df %>% 
+  select(date, local_authority, Constituency, predictions,
+         Party, retail_and_recreation_percent_change_from_baseline,
+         grocery_and_pharmacy_percent_change_from_baseline,
+         parks_percent_change_from_baseline,
+         transit_stations_percent_change_from_baseline,
+         workplaces_percent_change_from_baseline,
+         residential_percent_change_from_baseline) %>%
+  mutate(predictions = as.factor(predictions)) %>%
+  mutate(
+    combined_mobility = rowMeans(
+      select(.,
+             retail_and_recreation_percent_change_from_baseline,
+             grocery_and_pharmacy_percent_change_from_baseline,
+             transit_stations_percent_change_from_baseline,
+             workplaces_percent_change_from_baseline
+      ))) %>%
+  filter(local_authority %in% c("Manchester", "Leicester")) %>%
+  group_by(date, local_authority) %>%
+  summarise(class_1 = sum(predictions == 1),
+            class_2 = sum(predictions == 2),
+            combined_mobility = first(combined_mobility)) %>%
+  mutate(week = week(date)) %>%
+  group_by(week, local_authority) %>%
+  summarise(class_1 = sum(class_1),
+            class_2 = sum(class_2),
+            combined_mobility = mean(combined_mobility),
+            date = first(date),
+            ratio = class_1/class_2)
+
+ggplot(data = leicester_manchester_df, aes(
+  x = date, y = combined_mobility, colour = local_authority,
+  group = local_authority
+)) + 
+  geom_line()
+
+
+
+ggplot(data = leicester_manchester_df, aes(
+  x = date, y = speech, colour = local_authority,
+  group = local_authority
+)) + 
+  geom_line()
+
+
+mean(leicester_manchester_df[
+  leicester_manchester_df$local_authority == "Leicester",][["class_1"]])
+
+mean(leicester_manchester_df[
+  leicester_manchester_df$local_authority == "Manchester",][["class_1"]])
+  
+mean(leicester_manchester_df[
+  leicester_manchester_df$local_authority == "Leicester",][["class_2"]])
+
+mean(leicester_manchester_df[
+  leicester_manchester_df$local_authority == "Manchester",][["class_2"]])
+
+
+## Regression
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+mobility_df <- combined_df %>% 
+  select(date, local_authority, Constituency, predictions,
+         Party, retail_and_recreation_percent_change_from_baseline,
+         grocery_and_pharmacy_percent_change_from_baseline,
+         parks_percent_change_from_baseline,
+         transit_stations_percent_change_from_baseline,
+         workplaces_percent_change_from_baseline,
+         residential_percent_change_from_baseline) %>%
+  mutate(predictions = as.factor(predictions)) %>%
+  mutate(
+    combined_mobility = rowMeans(
+      select(.,
+             retail_and_recreation_percent_change_from_baseline,
+             grocery_and_pharmacy_percent_change_from_baseline,
+             transit_stations_percent_change_from_baseline,
+             workplaces_percent_change_from_baseline
+             ))) %>%
+  mutate(class_1 = ifelse(predictions == 1, 1, 0)) %>%
+  mutate(class_2 = ifelse(predictions == 2, 1, 0)) %>%
+  mutate(party_snp = ifelse(Party == "Scottish National Party", 1, 0)) %>%
+  mutate(party_dup = ifelse(Party == "DUP", 1, 0)) %>%
+  mutate(party_ind = ifelse(Party == "Independent", 1, 0)) %>%
+  mutate(party_cymru = ifelse(Party == "Plaid Cymru", 1, 0)) %>%
+  mutate(party_green = ifelse(Party == "Green", 1, 0)) %>%
+  mutate(party_alliance = ifelse(Party == "Alliance", 1, 0)) %>%
+  mutate(party_con = ifelse(Party == "Conservative", 1, 0)) %>%
+  mutate(party_lab = ifelse(Party %in% c(
+    "Labour", 
+    "Labour/Co-operative",
+    "Social Democratic and Labour Party"
+    ), 1, 0)) %>%
+  mutate(party_speaker = ifelse(Party == "Speaker", 1, 0)) %>%
+  mutate(party_libdem = ifelse(Party == "Liberal Democrat", 1, 0))
+  
 
 

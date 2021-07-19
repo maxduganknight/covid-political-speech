@@ -73,6 +73,9 @@ preds_df <- read.csv("data/predictions.csv") %>%
 cases_df <- read.csv("data/uk_cases.csv") %>%
   mutate(date = as.Date(date, format = "%d/%m/%Y"))
 
+deaths_df <- read.csv("data/uk_deaths.csv") %>%
+  mutate(date = as.Date(date, format = '%d/%m/%Y'))
+
 stringency_df <- read.csv("data/oxford_stringency_index.csv") %>%
   select(date, stringency) %>%
   mutate(date = as.Date(date, format = "%d-%b-%y"))
@@ -82,35 +85,66 @@ stringency_df <- read.csv("data/oxford_stringency_index.csv") %>%
 
 preds_df_time <- preds_df %>%
   merge(cases_df, by = "date", all.x = TRUE) %>%
+  merge(deaths_df, by = "date", all.x = TRUE) %>%
   merge(stringency_df, by = "date", all.x = TRUE) %>%
-  select(-Entity, -Code, -X, -Party, -Constituency) %>%
-  mutate(cases = round(cases)) %>%
   mutate(support = ifelse(predictions == 1, 1, 0)) %>%
   mutate(criticize = ifelse(predictions == 2, 1, 0)) %>%
   mutate(neither = ifelse(predictions == 3, 1, 0)) %>%
-  group_by(date, cases, stringency) %>%
+  group_by(date, cases, deaths, stringency) %>%
   summarise(support = sum(support), 
             criticize = sum(criticize)) %>%
   mutate(week = week(date)) %>%
-  group_by(week) %>%
+  group_by(week = floor_date(date, unit="week")) %>%
   summarise(date = as.Date(last(date)),
-            support = sum(support)/n(),
-            criticize = sum(criticize)/n(),
-            cases = sum(cases),
-            stringency = mean(stringency, na.rm = TRUE)) %>%
-  pivot_longer(cols = c("support", "criticize", "cases", "stringency"), 
-               names_to = "type")
+            Support = sum(support)/n(),
+            Criticize = sum(criticize)/n(),
+            Cases = sum(cases),
+            Deaths = sum(deaths),
+            Stringency = mean(stringency, na.rm = TRUE)) %>%
+  pivot_longer(cols = c("Support", "Criticize", "Cases", "Deaths", "Stringency"), 
+               names_to = "type") %>%
+  mutate(value = ceiling(value)) %>%
+  mutate(type_f = factor( # fix order
+    type, levels = c("Cases", "Deaths", "Stringency", "Support", "Criticize")
+    ))
 
-# plot predictions over time
-ggplot(data = preds_df_time, aes(x = date, y = value)) + 
-  geom_line(aes(colour = type)) +
-  labs(title = "Supportive and Critical Speeches Over Time",
-       y = "Proportion out of all COVID-19-related Speeches") +
-  scale_x_date(name = "Date", date_labels = "%b %y", date_breaks = "1 month") +
-  facet_grid(rows = vars(type), scales = "free_y") +
-  theme(axis.text.x = element_text(angle=45, hjust = 1))
+# plot predictions over time and cases
 
-#ggsave(filename = "visualizations/predictions_over_time.png")
+ggplot(data = filter(preds_df_time,
+                     type %in% c("Cases", "Support", "Criticize")), 
+                     aes(x = date, y = value)) + 
+  geom_line(aes(colour = type_f)) +
+  #labs(title = "COVID Cases and Speeches on Restrictions Over Time") +
+  scale_x_date(name = "Date", date_labels = "%b %Y", date_breaks = "1 month",
+               limit = c(as.Date("2020-02-02"), as.Date("2021-03-16"))) +
+  facet_grid(rows = vars(type_f), scales = "free_y", ) +
+  theme(axis.text.x = element_text(angle=45, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12),
+        legend.position = "none", axis.title.y = element_blank(),
+        strip.text.y = element_text(size = 18), 
+        axis.title.x = element_text(size = 18), 
+        plot.title = element_blank())
+
+#ggsave(filename = "visualizations/predictions_cases.png")
+
+# predictions vs. stringency
+
+ggplot(data = filter(preds_df_time,
+                     type %in% c("Stringency", "Support", "Criticize")), 
+       aes(x = date, y = value)) + 
+  geom_line(aes(colour = type_f)) +
+  #labs(title = "COVID Cases and Speeches on Restrictions Over Time") +
+  scale_x_date(name = "Date", date_labels = "%b %Y", date_breaks = "1 month",
+               limit = c(as.Date("2020-02-02"), as.Date("2021-03-16"))) +
+  facet_grid(rows = vars(type_f), scales = "free_y", ) +
+  theme(axis.text.x = element_text(angle=45, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12),
+        legend.position = "none", axis.title.y = element_blank(),
+        strip.text.y = element_text(size = 18), 
+        axis.title.x = element_text(size = 18), 
+        plot.title = element_blank())
+
+#ggsave(filename = "visualizations/predictions_stringency.png")
 
 # predictions by party
 preds_df_party <- preds_df %>%
@@ -141,9 +175,26 @@ ggplot(data = preds_df_party, aes(x = ratio,
                                "Independent" = "purple")) +
   labs(title = "How Critical is Each Party of Restrictions?", 
        y = "Party", x = "Ratio of Critical Speeches to Supportive Speeches") +
-  theme(legend.position = "none", axis.title.y = element_blank())
+  theme(legend.position = "none", axis.title.y = element_blank(),
+        axis.text.y = element_blank()) +
+  geom_text(
+    aes(label = Party),
+    x = 0.01,
+    hjust = 0,
+    color = "black",
+    size = 5)
 
 #ggsave(filename = "visualizations/predictions_by_party.png")
+
+# chi square test party vs class
+party_contingency <- preds_df %>%
+  select(Party, predictions) %>%
+  filter(Party %in% c("Conservative", "Labour", 
+                      "Liberal Democrat", "Scottish National Party", 
+                      "Green", "DUP"))
+  table()
+
+chisq <- chisq.test(party_contingency)
 
 # UK map of predictions by constituency
 # CITATION: https://cran.r-project.org/web/packages/parlitools/vignettes/introduction.html
@@ -151,11 +202,17 @@ ggplot(data = preds_df_party, aes(x = ratio,
 library(parlitools)
 library(leaflet)
 
+la_constituency_lookup <- read.csv(
+  "data/google_mobility/la_constituency_lookup.csv"
+)
+
 preds_df_constituency <- preds_df %>%
+  merge(la_constituency_lookup, by.x = "Constituency",
+        by.y = "constituency", all.x = TRUE) %>%
   mutate(support = ifelse(predictions == 1, 1, 0)) %>%
   mutate(criticize = ifelse(predictions == 2, 1, 0)) %>%
   mutate(neither = ifelse(predictions == 3, 1, 0)) %>%
-  group_by(Constituency) %>%
+  group_by(local_authority) %>%
   summarise(ratio = sum(criticize)/sum(support), 
             criticize = sum(criticize),
             support = sum(support))
@@ -163,18 +220,18 @@ preds_df_constituency <- preds_df %>%
 west_hex_map <- parlitools::west_hex_map
 
 #Join colours to hexagon map
-west_hex_map <- left_join(west_hex_map, preds_df_constituency, 
-                          by = c("constituency_name" = "Constituency")) 
+west_hex_map <- left_join(local_hex_map, preds_df_constituency, 
+                          by = c("la_name" = "local_authority")) 
 
 # Creating map labels
 labels <- paste0(
-  "<strong>", west_hex_map$constituency_name, "</strong>", "</br>",
+  "<strong>", west_hex_map$la_name, "</strong>", "</br>",
   "Ratio: ", west_hex_map$ratio, "</br>",
   "Supporting Speeches: ", west_hex_map$support, "</br>",
   "Critical Speeches: ", west_hex_map$criticize
 ) %>% lapply(htmltools::HTML)
 
-bins <- c(0, 0.05, 0.1, 0.15, 0.2, 0.3, 1, 4, Inf)
+bins <- c(0, 0.5, 1, 2, Inf)
 pal <- colorBin("YlOrRd", domain = preds_df_constituency$ratio, bins = bins)
 
 # Creating the map itself
