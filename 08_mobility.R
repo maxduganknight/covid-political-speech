@@ -1,3 +1,8 @@
+
+## NB: the code in this script is informed by guidance given by 
+## Sam Rickman (CPEC, LSE) and borrows from elements of his code used in research
+## for CPEC. 
+
 library(dplyr)
 library(tidyverse)
 library(httr)

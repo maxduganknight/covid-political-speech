@@ -267,8 +267,15 @@ preds_df_google <- read.csv("data/google_mobility/preds_mobility_combined.csv") 
   mutate(date = as.Date(date, format = "%Y-%m-%d")) %>%
   filter(predictions != 3) %>%
   group_by(predictions, date) %>%
-  summarise(combined_mobility = mean(combined_mobility))%>%
-  select(date, predictions, combined_mobility) %>%
+  summarise(
+    combined_mobility = mean(combined_mobility),
+    retail = mean(retail_and_recreation_percent_change_from_baseline),
+    grocery = mean(grocery_and_pharmacy_percent_change_from_baseline),
+    transit = mean(transit_stations_percent_change_from_baseline),
+    workplace = mean(workplaces_percent_change_from_baseline)
+    ) %>%
+  select(date, predictions, retail, grocery, transit, workplace, 
+         combined_mobility) %>%
   mutate(predictions = as.factor(predictions))
 
 
