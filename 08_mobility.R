@@ -10,10 +10,14 @@ library(jsonlite)
 library(sf)
 library(geodist)
 library(lubridate)
+library(ggrepel)
+library(stargazer)
 
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
-google_api_key <- read.csv("creds.csv")[[1,2]]
+# commented out to avoid accidentally using Google cloud credit
+
+#google_api_key <- read.csv("creds.csv")[[1,2]]
 
 get_lat_lng <- function(place_id) {
   url <- sprintf(
@@ -46,10 +50,9 @@ google_mobility <- read.csv(
   mutate(date = as.Date(date, format = "%Y-%m-%d"))
 
 # get lat and long values and store in lookup df
-# MDK don't rerun this because I'm out of GCP credit
 
 place_id <- unique(google_mobility$place_id)
-lat_lng <- lapply(place_id, get_lat_lng)
+#lat_lng <- lapply(place_id, get_lat_lng)
 place_lookup <- cbind(place_id, lat_lng)
 
 # merge in lat and lng values and separate into two cols
@@ -182,7 +185,7 @@ work_aov <- aov(workplaces_percent_change_from_baseline ~ predictions,
 
 
 ## MDK figure out how to compare manchester and leicester on both fronts. 
-leicester_manchester_df <- combined_df %>% 
+location_df <- combined_df %>% 
   select(date, local_authority, Constituency, predictions,
          Party, retail_and_recreation_percent_change_from_baseline,
          grocery_and_pharmacy_percent_change_from_baseline,
@@ -199,83 +202,97 @@ leicester_manchester_df <- combined_df %>%
              transit_stations_percent_change_from_baseline,
              workplaces_percent_change_from_baseline
       ))) %>%
-  filter(local_authority %in% c("Manchester", "Leicester")) %>%
-  group_by(date, local_authority) %>%
-  summarise(class_1 = sum(predictions == 1),
-            class_2 = sum(predictions == 2),
-            combined_mobility = first(combined_mobility)) %>%
   mutate(week = week(date)) %>%
   group_by(week, local_authority) %>%
-  summarise(class_1 = sum(class_1),
-            class_2 = sum(class_2),
+  summarise(class_1 = sum(predictions == 1),
+            class_2 = sum(predictions == 2),
             combined_mobility = mean(combined_mobility),
-            date = first(date),
-            ratio = class_1/class_2)
+            date = first(date))
+
+leicester_manchester_df <- location_df %>%
+  # mutate(city = ifelse(local_authority %in% c(
+  #   "Manchester", "Bolton", "Bury", "Oldham", "Rochdale", "Salford", 
+  #   "Stockport","Tameside", "Trafford", "Wigan"), "Manchester", ifelse(
+  #     local_authority %in% c("Leicester", "Blaby", "Charnwood", "Harborough", 
+  #                            "Hinckley and Bosworth", "Melton"),
+  #     "Leicester",""))) %>%
+  # filter(city %in% c("Manchester", "Leicester")) %>%
+  filter(local_authority %in% c("Leicester", "Manchester")) %>%
+  group_by(week, local_authority) %>%
+  summarise(
+    date = first(date),
+    class_1 = sum(class_1),
+    class_2 = sum(class_2),
+    combined_mobility = mean(combined_mobility, na.rm = TRUE)) 
+
+leicester_manchester_df %>%
+  group_by(local_authority) %>%
+  summarise(class_1 = sum(class_1),
+            class_2 = sum(class_2))
 
 ggplot(data = leicester_manchester_df, aes(
   x = date, y = combined_mobility, colour = local_authority,
   group = local_authority
 )) + 
+  scale_x_date(name = "Date", date_labels = "%b %Y", date_breaks = "1 month",
+               limit = c(as.Date("2020-02-02"), as.Date("2021-03-16"))) +
   geom_line()
 
+tier_3 <- c("Manchester", "Bolton", "Bury", "Oldham", "Rochdale", "Salford",
+            "Stockport", "Tameside", "Trafford", "Wigan", "Barnsley", "Doncaster",
+            "Rotherham", "Sheffield", "Warrington", "Ashfield", "Bassetlaw", 
+            "Broxtowe", "Gedling", "Mansfield", "Nottingham", "Rushcliffe", 
+            "Halton", "Knowsley", "Liverpool", "Sefton", "Wirral", "Blackpool",
+            "Burnley", "Chorley", "Fylde", "Hyndburn", "Pendle", "Preston", 
+            "Ribble Valley", "Rossendale", "South Ribble", "West Lancashire",
+            "Wyre")
 
-
-ggplot(data = leicester_manchester_df, aes(
-  x = date, y = speech, colour = local_authority,
-  group = local_authority
-)) + 
-  geom_line()
-
-
-mean(leicester_manchester_df[
-  leicester_manchester_df$local_authority == "Leicester",][["class_1"]])
-
-mean(leicester_manchester_df[
-  leicester_manchester_df$local_authority == "Manchester",][["class_1"]])
+location_agg <- location_df %>%
+  group_by(local_authority) %>%
+  summarise(class_1 = sum(class_1),
+            class_2 = sum(class_2),
+            combined_mobility = mean(combined_mobility, na.rm = TRUE)) %>%
+  filter(class_1 + class_2 > 10,
+         class_1 != 0, class_1 != 0) %>%
+  mutate(tier_3 = ifelse(local_authority %in% tier_3, 1, 0)) %>%
+  mutate(ratio = class_2/class_1) %>%
+  merge(read.csv("data/la_urban_class.csv"), by = "local_authority")
   
-mean(leicester_manchester_df[
-  leicester_manchester_df$local_authority == "Leicester",][["class_2"]])
 
-mean(leicester_manchester_df[
-  leicester_manchester_df$local_authority == "Manchester",][["class_2"]])
+ggplot(data = location_agg, aes(
+  x = ratio, y = combined_mobility, label = local_authority, colour = tier_3
+)) +
+  geom_point() +
+  geom_text_repel(
+    aes(
+    label= ifelse( ratio > 3 | combined_mobility < -48, 
+      as.character(local_authority), ''), size = 5
+    )) +
+  stat_smooth(method = "lm", se = FALSE, colour = "deepskyblue3") +
+  labs(y = "Average mobility", 
+       x = "Ratio of critical speeches to supportive speeches") +
+  theme(axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        legend.position = "none")
+
+#ggsave(filename = "visualizations/location_mobility.png")
+
+
+t.test(location_agg$ratio, location_agg$combined_mobility)
 
 
 ## Regression
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-mobility_df <- combined_df %>% 
-  select(date, local_authority, Constituency, predictions,
-         Party, retail_and_recreation_percent_change_from_baseline,
-         grocery_and_pharmacy_percent_change_from_baseline,
-         parks_percent_change_from_baseline,
-         transit_stations_percent_change_from_baseline,
-         workplaces_percent_change_from_baseline,
-         residential_percent_change_from_baseline) %>%
-  mutate(predictions = as.factor(predictions)) %>%
-  mutate(
-    combined_mobility = rowMeans(
-      select(.,
-             retail_and_recreation_percent_change_from_baseline,
-             grocery_and_pharmacy_percent_change_from_baseline,
-             transit_stations_percent_change_from_baseline,
-             workplaces_percent_change_from_baseline
-             ))) %>%
-  mutate(class_1 = ifelse(predictions == 1, 1, 0)) %>%
-  mutate(class_2 = ifelse(predictions == 2, 1, 0)) %>%
-  mutate(party_snp = ifelse(Party == "Scottish National Party", 1, 0)) %>%
-  mutate(party_dup = ifelse(Party == "DUP", 1, 0)) %>%
-  mutate(party_ind = ifelse(Party == "Independent", 1, 0)) %>%
-  mutate(party_cymru = ifelse(Party == "Plaid Cymru", 1, 0)) %>%
-  mutate(party_green = ifelse(Party == "Green", 1, 0)) %>%
-  mutate(party_alliance = ifelse(Party == "Alliance", 1, 0)) %>%
-  mutate(party_con = ifelse(Party == "Conservative", 1, 0)) %>%
-  mutate(party_lab = ifelse(Party %in% c(
-    "Labour", 
-    "Labour/Co-operative",
-    "Social Democratic and Labour Party"
-    ), 1, 0)) %>%
-  mutate(party_speaker = ifelse(Party == "Speaker", 1, 0)) %>%
-  mutate(party_libdem = ifelse(Party == "Liberal Democrat", 1, 0))
-  
+m1 = lm(combined_mobility ~  class_1 + class_2, data = location_agg)
+m2 = lm(combined_mobility ~  class_1 + class_2 + urban, data = location_agg)
+m3 = lm(combined_mobility ~  class_1 + class_2 + urban + tier_3, data = location_agg)
 
-
+stargazer(m1, m2, m3, type = "latex", 
+          dep.var.labels = "Average change in Google mobility",
+          covariate.labels = c("Number of Class 1 speeches", 
+                               "Number of Class 2 speeches",
+                               "Level of urbanisation",
+                               "Tier 3 Restrictions"), out = "google_regression.txt")
