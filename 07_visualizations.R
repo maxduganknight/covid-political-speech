@@ -84,7 +84,7 @@ stringency_df <- read.csv("data/oxford_stringency_index.csv") %>%
 # look at predictions over time
 
 preds_df_time <- preds_df %>%
-  merge(cases_df, by = "date", all.x = TRUE) %>%
+  merge(cases_df, by = "date", all.x = TRUE, all.y = TRUE) %>%
   merge(deaths_df, by = "date", all.x = TRUE) %>%
   merge(stringency_df, by = "date", all.x = TRUE) %>%
   mutate(support = ifelse(predictions == 1, 1, 0)) %>%
@@ -94,10 +94,10 @@ preds_df_time <- preds_df %>%
   summarise(support = sum(support), 
             criticize = sum(criticize)) %>%
   mutate(week = week(date)) %>%
-  group_by(week = floor_date(date, unit="week")) %>%
-  summarise(date = as.Date(last(date)),
-            Support = sum(support)/n(),
-            Criticize = sum(criticize)/n(),
+  group_by(date) %>%
+  summarise(#date = as.Date(last(date)),
+            Support = sum(support),
+            Criticize = sum(criticize),
             Cases = sum(cases),
             Deaths = sum(deaths),
             Stringency = mean(stringency, na.rm = TRUE)) %>%
@@ -113,7 +113,7 @@ preds_df_time <- preds_df %>%
 ggplot(data = filter(preds_df_time,
                      type %in% c("Cases", "Support", "Criticize")), 
                      aes(x = date, y = value)) + 
-  geom_line(aes(colour = type_f)) +
+  geom_bar(stat = "identity", aes(color = type_f)) +
   #labs(title = "COVID Cases and Speeches on Restrictions Over Time") +
   scale_x_date(name = "Date", date_labels = "%b %Y", date_breaks = "1 month",
                limit = c(as.Date("2020-02-02"), as.Date("2021-03-16"))) +
@@ -124,7 +124,7 @@ ggplot(data = filter(preds_df_time,
         strip.text.y = element_text(size = 18), 
         axis.title.x = element_text(size = 18), 
         plot.title = element_blank())
-
+  
 #ggsave(filename = "visualizations/predictions_cases.png")
 
 # predictions vs. stringency
@@ -132,8 +132,7 @@ ggplot(data = filter(preds_df_time,
 ggplot(data = filter(preds_df_time,
                      type %in% c("Stringency", "Support", "Criticize")), 
        aes(x = date, y = value)) + 
-  geom_line(aes(colour = type_f)) +
-  #labs(title = "COVID Cases and Speeches on Restrictions Over Time") +
+  geom_bar(stat = "identity", aes(color = type_f)) +
   scale_x_date(name = "Date", date_labels = "%b %Y", date_breaks = "1 month",
                limit = c(as.Date("2020-02-02"), as.Date("2021-03-16"))) +
   facet_grid(rows = vars(type_f), scales = "free_y", ) +
@@ -288,5 +287,70 @@ ggplot(data = preds_df_google,
        y = "Mobility % Change from Baseline") +
   scale_x_date(name = "Date", date_labels = "%b %y", date_breaks = "1 month") +
   theme(axis.text.x = element_text(angle=45, hjust = 1))
-  
-  
+
+## mobility vs stringency
+
+mobility <- read.csv(
+  "data/google_mobility/2021_GB_Region_Mobility_Report.csv"
+) %>%
+  rbind(read.csv(
+    "data/google_mobility/2020_GB_Region_Mobility_Report.csv"
+  )) %>%
+  mutate(date = as.Date(date, format = "%Y-%m-%d")) %>%
+  mutate(week = week(date)) %>%
+  group_by(week = floor_date(date, unit="week")) %>%
+  summarise(
+    retail = mean(
+      retail_and_recreation_percent_change_from_baseline, na.rm = TRUE
+    ), 
+    grocery = mean(
+      grocery_and_pharmacy_percent_change_from_baseline, na.rm = TRUE
+      ), 
+    transit = mean(
+        transit_stations_percent_change_from_baseline, na.rm = TRUE
+      ),
+    workplace = mean(
+      workplaces_percent_change_from_baseline, na.rm = TRUE
+    ),
+    parks = mean(
+      parks_percent_change_from_baseline, na.rm = TRUE
+    ),
+    residential = mean(
+      residential_percent_change_from_baseline, na.rm = TRUE
+    ),
+    week_end = as.Date(last(date))
+    ) %>% 
+  mutate(
+    combined_mobility = rowMeans(
+      select(., retail, grocery, transit, workplace))
+    )
+
+
+ggplot(data = mobility,
+       aes(x = week_end, y = combined_mobility)) +
+  geom_point() +
+  geom_line() +
+  scale_x_date(name = "Date", date_labels = "%B %Y", date_breaks = "1 month") +
+  theme(axis.text.x = element_text(angle=45, hjust = 1, size = 10)) +
+  labs(y = "Mobility % Change from Baseline") +
+  geom_vline(xintercept = as.Date("2020-03-23"), linetype = 4) +
+  annotate("text", label = "First\nnational\nlockdown",
+           x = as.Date("2020-03-23"), y = 0,
+                size = 4, hjust = -.05) +
+  geom_vline(xintercept = as.Date("2020-05-10"), linetype = 4) +
+  annotate("text", label = "Beginning of\nlockdown easing",
+           x = as.Date("2020-05-10"), y = -15,
+           size = 4, hjust = -0.05) +
+  geom_vline(xintercept = as.Date("2020-09-22"), linetype = 4) +
+  annotate("text", label = "New restrictions,\n return to work\n from home",
+           x = as.Date("2020-09-22"), y = -5,
+           size = 4, hjust = -.05) +
+  geom_vline(xintercept = as.Date("2020-12-21"), linetype = 4) +
+  annotate("text", label = "London, SE England\n enter Tier 4",
+         x = as.Date("2020-12-21"), y = -15,
+         size = 4, hjust = -.05) +
+  geom_vline(xintercept = as.Date("2021-04-12"), linetype = 4) +
+  annotate("text", label = "Non-essential\nretail opens",
+           x = as.Date("2021-04-21"), y = -50,
+           size = 4, hjust = -.0001)
+#ggsave(filename = "visualizations/mobility_restrictions.png")  
