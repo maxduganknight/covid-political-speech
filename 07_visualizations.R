@@ -58,10 +58,12 @@ ggplot(data = cases_keywords, aes(x = date, y = value)) +
   geom_bar(stat = "identity", aes(color = type)) +
   facet_grid(rows = vars(type), scales = "free_y", ) +
   scale_color_manual( values = c("red3", "royalblue3")) +
+  #scale_x_date(name = "Date", date_labels = "%B %Y", date_breaks = "1 month") +
   theme(legend.title=element_blank(), legend.position = "none",
-        axis.title.y = element_blank(), strip.text.y = element_text(size = 18)) +
-  labs(x = "Date", 
-       title = "MPs' Language Has Mirrored Spread of Virus")
+        #axis.text.x = element_text(angle=45, hjust = 1, size = 10),
+        axis.title.y = element_blank(), strip.text.y = element_text(size = 14),
+        axis.text.y = element_text(size = 10)) +
+  labs(x = "Date")
 #ggsave(filename = "visualizations/cases_keywords.png")
 
 ## Predictions

@@ -51,7 +51,7 @@ google_mobility <- read.csv(
 
 # get lat and long values and store in lookup df
 
-place_id <- unique(google_mobility$place_id)
+place_id <- unique(google_mobility$place_aid)
 #lat_lng <- lapply(place_id, get_lat_lng)
 place_lookup <- cbind(place_id, lat_lng)
 
@@ -151,15 +151,29 @@ combined_df <- preds_df %>%
     grocery_and_pharmacy_percent_change_from_baseline +
     transit_stations_percent_change_from_baseline +
     workplaces_percent_change_from_baseline)/4
-    )
+    ) %>%
+  mutate(week = week(date)) %>%
+  group_by(week = floor_date(date, unit="week"), local_authority) %>%
+  summarise(
+    retail = mean(retail_and_recreation_percent_change_from_baseline, na.rm = TRUE),
+    grocery = mean(grocery_and_pharmacy_percent_change_from_baseline, na.rm = TRUE),
+    transit = mean(transit_stations_percent_change_from_baseline, na.rm = TRUE),
+    workplace = mean(workplaces_percent_change_from_baseline, na.rm = TRUE),
+    parks = mean(parks_percent_change_from_baseline, na.rm = TRUE),
+    residential = mean(residential_percent_change_from_baseline, na.rm = TRUE), 
+    class_1 = sum(predictions == 1),
+    class_2 = sum(predictions == 2)
+  ) %>%
+  mutate(supportive = ifelse(class_1 > class_2, 1, 
+                             ifelse(class_2 > class_1, 0, NA)))
 
 combined_df %>%
-  select(predictions, mobility_mean) %>%
-  group_by(predictions) %>%
+  select(supportive, retail, grocery, transit, workplace, parks, residential) %>%
+  group_by(supportive) %>%
   summarise(
     count = n(),
-    mean = mean(mobility_mean, na.rm =TRUE),
-    sd = sd(mobility_mean, na.rm = TRUE)
+    mean = mean(residential, na.rm =TRUE),
+    sd = sd(residential, na.rm = TRUE)
   )
 
 # anovas looking at predictions vs mobility
@@ -175,8 +189,24 @@ transit_aov <- aov(transit_stations_percent_change_from_baseline ~ predictions,
 work_aov <- aov(workplaces_percent_change_from_baseline ~ predictions, 
                    data = combined_df)
 
+# t tests
+retail_t<- t.test(retail ~ supportive, 
+                  data = combined_df)
 
+groc_t <- t.test(grocery ~ supportive, 
+                data = combined_df)
 
+transit_t <- t.test(transit ~ supportive, 
+                   data = combined_df)
+
+work_t <- t.test(workplace ~ supportive, 
+                data = combined_df)
+
+park_t <- t.test(parks ~ supportive,
+                 data = combined_df)
+
+residential_t <- t.test(residential ~ supportive,
+                      data = combined_df)
 
 #write.csv(combined_df, "data/google_mobility/preds_mobility_combined.csv")
 

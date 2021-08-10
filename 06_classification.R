@@ -4,6 +4,7 @@ library(tidyr)
 library(quanteda)
 library(stm)
 library(quanteda.textmodels)
+library(quanteda.textstats)
 library(dplyr)
 library(glmnet)
 library(doMC)
@@ -81,6 +82,10 @@ dfm <- covid_corpus %>%
   dfm() %>%
   dfm_trim(min_termfreq = 5, min_docfreq = 2) %>% 
   dfm_weight(scheme = "prop")
+
+mean(textstat_lexdiv(dfm, measure = "TTR")$TTR)
+sd(textstat_lexdiv(dfm, measure = "TTR")$TTR)
+
 
 #sort columns in case order changes while running
 dfm <- dfm[,sort(featnames(dfm))]
@@ -544,7 +549,7 @@ randomsearch = cbind(lowest_error_df, parameters_df)
 # Quickly display highest accuracy
 max(randomsearch$`1 - min(tune$evaluation_log$val_mlogloss)`)
 
-## Predictions on unclassified speeches
+## Predictions on unlabelled speeches
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 classified_indices <- classified_texts$textid
